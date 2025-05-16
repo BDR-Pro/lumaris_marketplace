@@ -1,0 +1,59 @@
+# =========================
+# RUST
+# =========================
+/target/                # Rust build artifacts
+**/*.rs.bk              # Rust backup files
+Cargo.lock              # Often ignored for libraries
+# Rust build artifacts
+**/target/
+
+# Optional: exclude Rust IDE files
+/.idea/
+/*.iml
+
+# =========================
+# PYTHON
+# =========================
+# Bytecode & cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.env
+*.venv
+env.bak/
+venv.bak/
+
+# Logs and temporary
+*.log
+*.tmp
+
+# Database & local dev
+*.sqlite3
+*.db
+
+# Jupyter & notebooks
+.ipynb_checkpoints/
+
+# =========================
+# OS / EDITORS
+# =========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+*.swp
+*.bak
+*.old
+*.orig
+
+# =========================
+# Pydantic / FastAPI cache
+# =========================
+.pydantic/

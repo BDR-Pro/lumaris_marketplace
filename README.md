@@ -167,6 +167,10 @@ Lumaris is a decentralized marketplace for computing resources, enabling individ
 
 ---
 
+## Matchmaking Engine
+
+* [Match Making Design](matchmaking_design.md)
+
 ## 🔮 Future Vision
 
 > A decentralized, pay-per-cycle computing marketplace allowing researchers, developers, and enterprises to access elastic CPU/GPU power from global contributors.

@@ -75,8 +75,10 @@ jobs:
           ignore-unfixed: true
           exit-code: 1
           severity: CRITICAL,HIGH
-
           
+
+
+
   talisman:
     name: Secret Scan with Talisman
     runs-on: ubuntu-latest
@@ -87,13 +89,14 @@ jobs:
 
       - name: Download and Run Talisman
         run: |
-          curl -L -o talisman https://github.com/thoughtworks/talisman/releases/download/v1.37.0/talisman_linux_amd64
+          curl -L -o talisman https://github.com/thoughtworks/talisman/releases/download/v1.47.0/talisman-linux-amd64
           chmod +x talisman
           ./talisman --version
           ./talisman -i . --scan
-          
-      - name: Upload Talisman scan report
+
+      - name: Upload Talisman Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: talisman-report
-          path: talisman_report/talisman_reports/data
+          path: talisman_report/

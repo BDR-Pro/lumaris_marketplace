@@ -1,0 +1,95 @@
+name: Security & Quality Checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday at 3 AM
+
+jobs:
+
+  codeql-analysis:
+    name: CodeQL Static Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      matrix:
+        language: [python, rust]  
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Run CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+  sonarcloud:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v2
+        with:
+          projectBaseDir: .
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: BDR-Pro_lumaris_marketplace
+          SONAR_ORG: bdr-pro
+
+  trivy-scan:
+    name: Trivy Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Trivy Filesystem Scan
+        uses: aquasecurity/trivy-action@v0.20.0  # Use stable release
+        with:
+          scan-type: fs
+          ignore-unfixed: true
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          format: table
+
+  talisman:
+    name: Secret Scan with Talisman
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Avoid failing the whole workflow
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Talisman
+        run: |
+          curl -Lo talisman https://github.com/thoughtworks/talisman/releases/latest/download/talisman-linux-amd64
+          chmod +x talisman
+          sudo mv talisman /usr/local/bin/
+
+      - name: Run Talisman Scan
+        run: talisman -i . --scan

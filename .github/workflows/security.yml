@@ -32,7 +32,6 @@ jobs:
 
       - name: Run CodeQL Analysis
         uses: github/codeql-action/analyze@v3
-
   sonarcloud:
     name: SonarCloud Scan
     runs-on: ubuntu-latest
@@ -57,11 +56,11 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@v2
         with:
           projectBaseDir: .
+          organization: bdr-pro
+          projectKey: BDR-Pro_lumaris_marketplace
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_PROJECT_KEY: BDR-Pro_lumaris_marketplace
-          SONAR_ORG: bdr-pro
-          
+
   trivy-scan:
     name: Trivy Vulnerability Scan
     runs-on: ubuntu-latest
@@ -77,7 +76,6 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
 
-
   talisman:
     name: Secret Scan with Talisman
     runs-on: ubuntu-latest
@@ -88,6 +86,8 @@ jobs:
 
       - name: Install and Run Talisman
         run: |
-          curl -Lo talisman https://github.com/thoughtworks/talisman/releases/latest/download/talisman-linux-amd64
-          chmod +x talisman
-          ./talisman -i . --scan
+          curl -L -o talisman.tar.gz https://github.com/thoughtworks/talisman/releases/latest/download/talisman-linux-amd64.tar.gz
+          mkdir talisman-bin && tar -xzf talisman.tar.gz -C talisman-bin
+          chmod +x talisman-bin/talisman
+          ./talisman-bin/talisman -i . --scan
+

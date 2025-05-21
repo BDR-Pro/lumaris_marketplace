@@ -76,6 +76,7 @@ jobs:
           exit-code: 1
           severity: CRITICAL,HIGH
 
+          
   talisman:
     name: Secret Scan with Talisman
     runs-on: ubuntu-latest
@@ -84,10 +85,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install and Run Talisman
+      - name: Download and Run Talisman
         run: |
-          curl -L -o talisman.tar.gz https://github.com/thoughtworks/talisman/releases/latest/download/talisman-linux-amd64.tar.gz
-          mkdir talisman-bin && tar -xzf talisman.tar.gz -C talisman-bin
-          chmod +x talisman-bin/talisman
-          ./talisman-bin/talisman -i . --scan
-
+          curl -L -o talisman https://github.com/thoughtworks/talisman/releases/download/v1.37.0/talisman_linux_amd64
+          chmod +x talisman
+          ./talisman --version
+          ./talisman -i . --scan

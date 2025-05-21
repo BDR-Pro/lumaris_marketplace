@@ -20,7 +20,7 @@ jobs:
 
     strategy:
       matrix:
-        language: [python]  # ❌ Removed rust (not supported by CodeQL)
+        language: [python]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,36 +33,34 @@ jobs:
       - name: Run CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
+  sonarcloud:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    sonarcloud:
-        name: SonarCloud Scan
-        runs-on: ubuntu-latest
-        steps:
-          - name: Checkout repository
-            uses: actions/checkout@v4
-    
-          - name: Set up Java
-            uses: actions/setup-java@v4
-            with:
-              java-version: '17'
-              distribution: 'temurin'
-    
-          - name: Cache SonarCloud packages
-            uses: actions/cache@v3
-            with:
-              path: ~/.sonar/cache
-              key: ${{ runner.os }}-sonar
-              restore-keys: ${{ runner.os }}-sonar
-    
-          - name: Run SonarCloud Scan
-            uses: SonarSource/sonarcloud-github-action@v2
-            with:
-              projectBaseDir: .
-            env:
-              SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-              SONAR_PROJECT_KEY: BDR-Pro_lumaris_marketplace
-              SONAR_ORGANIZATION: bdr-pro
-    
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Run SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v2
+        with:
+          projectBaseDir: .
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_PROJECT_KEY: BDR-Pro_lumaris_marketplace
+          SONAR_ORGANIZATION: bdr-pro
 
   trivy-scan:
     name: Trivy Vulnerability Scan
@@ -78,7 +76,6 @@ jobs:
           ignore-unfixed: true
           exit-code: 1
           severity: CRITICAL,HIGH
-          
 
   talisman:
     name: Secret Scan with Talisman

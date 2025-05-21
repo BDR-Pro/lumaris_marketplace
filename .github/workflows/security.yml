@@ -61,7 +61,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_PROJECT_KEY: BDR-Pro_lumaris_marketplace
           SONAR_ORG: bdr-pro
-
+          
   trivy-scan:
     name: Trivy Vulnerability Scan
     runs-on: ubuntu-latest
@@ -69,14 +69,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Trivy Filesystem Scan
-        uses: aquasecurity/trivy-action@v0.11.2  # ✅ Known stable version
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
           ignore-unfixed: true
           exit-code: 1
           severity: CRITICAL,HIGH
-          format: table
+
 
   talisman:
     name: Secret Scan with Talisman
@@ -86,11 +86,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Talisman
+      - name: Install and Run Talisman
         run: |
           curl -Lo talisman https://github.com/thoughtworks/talisman/releases/latest/download/talisman-linux-amd64
           chmod +x talisman
-          ./talisman --version
-
-      - name: Run Talisman Scan
-        run: ./talisman -i . --scan
+          ./talisman -i . --scan

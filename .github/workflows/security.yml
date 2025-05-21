@@ -91,3 +91,9 @@ jobs:
           chmod +x talisman
           ./talisman --version
           ./talisman -i . --scan
+          
+      - name: Upload Talisman scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: talisman-report
+          path: talisman_report/talisman_reports/data

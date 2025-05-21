@@ -1,7 +1,7 @@
 # requirements.txt
 fastapi==0.110.0
 uvicorn[standard]==0.34.2
-sqlalchemy==2.0.30
+sqlalchemy==2.0.41
 pydantic==2.11.4
 pydantic-settings==2.2.1
 python-multipart==0.0.9

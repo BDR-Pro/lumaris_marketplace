@@ -13,4 +13,4 @@ ureq = "2.9"
 sysinfo = { version = "0.30", features = ["multithread"] }
 serde = { version = "1", features = ["derive"] }
 url = "2"
-hostname = "0.3"
+hostname = "0.4"

@@ -1,10 +1,14 @@
+"""Tests for the /jobs endpoints of the Admin API."""
+
 def test_list_jobs_returns_empty_list_initially(client):
+    """Test that the jobs list is initially empty."""
     response = client.get("/jobs/")
     assert response.status_code == 200
     assert response.json() == []
 
 
 def test_submit_job_creates_new_job(client):
+    """Test that submitting a new job successfully creates it."""
     job_data = {
         "node_id": 1,
         "status": "pending",
@@ -19,6 +23,7 @@ def test_submit_job_creates_new_job(client):
 
 
 def test_list_jobs_returns_created_job(client):
+    """Test that the created job appears in the jobs list."""
     job_data = {
         "node_id": 2,
         "status": "queued",

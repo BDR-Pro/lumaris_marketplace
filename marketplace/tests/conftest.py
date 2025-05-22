@@ -1,3 +1,5 @@
+"""Pytest configuration for Admin API tests using an in-memory SQLite DB."""
+
 from unittest.mock import patch
 
 import pytest
@@ -8,30 +10,26 @@ from sqlalchemy.orm import sessionmaker
 from admin_api.database import get_db
 from admin_api.models import Base
 
-# ✅ Patch to skip production DB creation
+# Patch app startup to skip real DB initialization
 with patch("admin_api.main.Base.metadata.create_all"):
     from admin_api.main import create_app
 
 
 @pytest.fixture()
 def client():
-    # Create a shared in-memory database connection
+    """Fixture that provides a FastAPI TestClient with a fresh in-memory database."""
     test_engine = create_engine(
         "sqlite:///:memory:", connect_args={"check_same_thread": False}
     )
     connection = test_engine.connect()
-
-    # Begin a nested transaction (optional but useful for test isolation)
     transaction = connection.begin()
 
-    # Bind a sessionmaker to the connection
-    TestingSessionLocal = sessionmaker(bind=connection)
-
-    # Create the schema once
+    testing_session_local = sessionmaker(bind=connection)
     Base.metadata.create_all(bind=connection)
 
     def override_get_db():
-        db = TestingSessionLocal()
+        """Yield a session bound to the in-memory DB."""
+        db = testing_session_local()
         try:
             yield db
         finally:
@@ -43,6 +41,5 @@ def client():
 
     yield test_client
 
-    # Cleanup: Rollback the transaction and dispose the connection
     transaction.rollback()
     connection.close()

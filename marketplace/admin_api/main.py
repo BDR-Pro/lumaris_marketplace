@@ -1,6 +1,5 @@
 """Main entrypoint for the Admin API of the Compute Marketplace."""
 
-import os
 from fastapi import FastAPI
 
 from admin_api.auth import router as auth_router

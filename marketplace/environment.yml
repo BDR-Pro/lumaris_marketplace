@@ -1,0 +1,21 @@
+name: lumaris_marketplace
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - flask
+  - gunicorn
+  - sqlalchemy
+  - requests
+  - pandas
+  - numpy
+  - pip:
+    - fastapi
+    - uvicorn
+    - pydantic
+    - httpx
+    - black
+    - flake8
+    - pytest

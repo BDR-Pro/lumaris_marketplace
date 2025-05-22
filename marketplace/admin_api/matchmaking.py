@@ -11,14 +11,7 @@ from admin_api.schemas import (JobAssignmentIn, JobStatusUpdate,
 
 router = APIRouter()
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
+from admin_api.database import get_db
 
 API_KEY = "super-secret"  # Replace with env var in production
 

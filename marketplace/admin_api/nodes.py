@@ -3,20 +3,12 @@ from typing import List
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from admin_api.database import SessionLocal
 from admin_api.models import Node
 from admin_api.schemas import NodeOut, StatUpdate
 
 router = APIRouter()
 
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+from admin_api.database import get_db
 
 
 @router.post("/update", response_model=NodeOut)

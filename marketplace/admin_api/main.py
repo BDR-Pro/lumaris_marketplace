@@ -1,4 +1,6 @@
 # admin_api/main.py
+import os
+
 from fastapi import FastAPI
 
 from admin_api.auth import router as auth_router
@@ -8,13 +10,15 @@ from admin_api.matchmaking import router as matchmaking_router
 from admin_api.models import Base
 from admin_api.nodes import router as node_router
 
-app = FastAPI(title="Admin API for Compute Marketplace")
 
-Base.metadata.create_all(bind=engine)
+def create_app() -> FastAPI:
+    app = FastAPI(title="Admin API for Compute Marketplace")
+    app.include_router(auth_router, prefix="/auth")
+    app.include_router(node_router, prefix="/nodes")
+    app.include_router(job_router, prefix="/jobs")
+    app.include_router(matchmaking_router, prefix="/matchmaking")
+    return app
 
-app.include_router(auth_router, prefix="/auth")
 
-
-app.include_router(node_router, prefix="/nodes")
-app.include_router(job_router, prefix="/jobs")
-app.include_router(matchmaking_router, prefix="/matchmaking")
+# Used by production (e.g. uvicorn main:app)
+app = create_app()

@@ -1,11 +1,14 @@
+from typing import List
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from admin_api.database import SessionLocal
 from admin_api.models import Node
 from admin_api.schemas import NodeOut, StatUpdate
-from typing import List
 
 router = APIRouter()
+
 
 # Dependency
 def get_db():
@@ -15,9 +18,12 @@ def get_db():
     finally:
         db.close()
 
+
 @router.post("/update", response_model=NodeOut)
 def update_node_stats(stat: StatUpdate, db: Session = Depends(get_db)):
-    print(f"Stat from {stat.node_id}: CPU={stat.cpu}, MEM={stat.mem}, FUNDS={stat.funds}")
+    print(
+        f"Stat from {stat.node_id}: CPU={stat.cpu}, MEM={stat.mem}, FUNDS={stat.funds}"
+    )
 
     # Check if node already exists
     node = db.query(Node).filter(Node.hostname == stat.node_id).first()
@@ -26,7 +32,7 @@ def update_node_stats(stat: StatUpdate, db: Session = Depends(get_db)):
             hostname=stat.node_id,
             status="online",
             cpu_usage=stat.cpu,
-            mem_usage=stat.mem
+            mem_usage=stat.mem,
         )
         db.add(node)
     else:
@@ -38,18 +44,17 @@ def update_node_stats(stat: StatUpdate, db: Session = Depends(get_db)):
     db.refresh(node)
     return NodeOut.model_validate(node)
 
+
 @router.get("/", response_model=List[NodeOut])
 def list_nodes(db: Session = Depends(get_db)):
     nodes = db.query(Node).all()
     return [NodeOut.model_validate(n) for n in nodes]
 
+
 @router.post("/", response_model=NodeOut)
 def register_node(stat: StatUpdate, db: Session = Depends(get_db)):
     node = Node(
-        hostname=stat.node_id,
-        status="online",
-        cpu_usage=stat.cpu,
-        mem_usage=stat.mem
+        hostname=stat.node_id, status="online", cpu_usage=stat.cpu, mem_usage=stat.mem
     )
     db.add(node)
     db.commit()

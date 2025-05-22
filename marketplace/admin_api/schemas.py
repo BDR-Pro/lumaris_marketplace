@@ -1,11 +1,12 @@
-
 from pydantic import BaseModel
+
 
 class StatUpdate(BaseModel):
     node_id: str
     cpu: float
     mem: float
     funds: float
+
 
 class NodeOut(BaseModel):
     id: int
@@ -14,23 +15,20 @@ class NodeOut(BaseModel):
     cpu_usage: float
     mem_usage: float
 
-    model_config = {
-        "from_attributes": True
-    }
-    
-    
+    model_config = {"from_attributes": True}
+
+
 class JobIn(BaseModel):
     node_id: int
     status: str
     duration: float
     cost: float
 
+
 class JobOut(JobIn):
     id: int
 
-    model_config = {
-        "from_attributes": True
-    }
+    model_config = {"from_attributes": True}
 
 
 class NodeAvailabilityUpdate(BaseModel):
@@ -39,9 +37,11 @@ class NodeAvailabilityUpdate(BaseModel):
     mem_available: int
     status: str
 
+
 class JobAssignmentIn(BaseModel):
     job_id: str
     node_id: str
+
 
 class JobStatusUpdate(BaseModel):
     job_id: str

@@ -9,8 +9,8 @@ from admin_api.nodes import router as node_router
 
 # These are imported in other files for DB initialization
 # Keeping them for side effects (e.g., Alembic, if used)
-from admin_api.database import engine  # noqa: F401
-from admin_api.models import Base  # noqa: F401
+from admin_api.database import engine as _engine
+from admin_api.models import Base as _Base
 
 
 def create_app() -> FastAPI:

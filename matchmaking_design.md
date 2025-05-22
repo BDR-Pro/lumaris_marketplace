@@ -169,3 +169,68 @@ The existing WebSocket protocol will be extended to include:
 3. Implement the basic matching algorithm
 4. Update the database schema
 5. Add job dispatch functionality
+
+## ✅ Lumaris Matchmaking Implementation TODO Checklist
+
+## 🧠 Matching Engine
+
+- [ ] Implement weighted scoring algorithm in `matchmaker.rs`
+  - [ ] Factors: CPU available, memory available, reliability score
+  - [ ] Function: `score_node(job_req: &JobRequirements, node: &NodeProfile) -> f64`
+- [ ] Support fallback strategies if ideal node is unavailable
+
+## 🧮 Node Availability Tracker
+
+- [ ] Rust sends availability via API to Python admin
+- [ ] Python API stores data to DB (`node_capabilities` table)
+- [ ] Add `reliability_score` and `last_seen_at` tracking in backend
+- [ ] Handle heartbeats / timeouts on Python side
+
+## ⏳ Job Queueing System
+
+- [ ] Create `JobQueue` struct with:
+  - [ ] Priority sorting (priority = 1 highest)
+  - [ ] Max concurrent job handling
+  - [ ] Support for preemption (Phase 2+)
+
+## 📦 Job Requirements Parsing
+
+- [ ] Parse `cpu_cores`, `mem_mb`, `duration`, `priority` from incoming job
+- [ ] Validate inputs (e.g. min/max allowed values)
+- [ ] Store to `job_requirements` table
+
+## 🗃️ Database Layer (Python only)
+
+- [ ] Implement tables:
+  - [ ] `job_requirements`
+  - [ ] `node_capabilities`
+  - [ ] `job_assignments`
+- [ ] Add job + node history tracking
+- [ ] Track job outcomes (success/failure/duration)
+
+## 🔁 WebSocket / API Protocol Extensions
+
+- [ ] Rust sends:
+  - [ ] `POST /node/update_availability`
+  - [ ] `POST /job/assign`
+  - [ ] `POST /job/status`
+- [ ] Python receives and writes to DB
+- [ ] Validate + authenticate Rust requests via API token
+
+## 📊 Reliability + Analytics (Python)
+
+- [ ] Log job durations, failures, CPU/mem stats
+- [ ] Update reliability score of nodes over time
+- [ ] Store completed job metadata for future analysis
+
+## 🧪 Testing
+
+- [ ] Write unit tests for matchmaker scoring
+- [ ] Simulate job submissions with varying loads
+- [ ] Simulate node connections, drops, and recoveries
+
+## 🔧 Optional: CLI Testing Tools
+
+- [ ] CLI: Submit test job from terminal
+- [ ] CLI: Simulate seller sending heartbeat
+- [ ] CLI: Manually inspect current matchmaking table

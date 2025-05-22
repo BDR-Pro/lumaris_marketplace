@@ -8,6 +8,8 @@ use crate::matchmaker::{SharedMatchMaker, JobStatus};
 use distributed_engine::{
     DistributedJobManager, JobPayload, JobChunk, JobResult
 };
+use crate::http_client::assign_job;
+
 
 // Job scheduler is responsible for:
 // 1. Receiving job submissions
@@ -95,7 +97,8 @@ impl JobScheduler {
                 expected_duration_sec: chunk.estimated_work_units * 10, // Rough estimate
                 priority: 1,    // Default priority
             };
-            
+            // TO DO: assign_job(&job.id.to_string(), &selected_node_id).await.unwrap();
+
             let matchmaker_job = crate::matchmaker::Job {
                 id: 0, // Will be assigned by matchmaker
                 requirements: job_requirements,

@@ -31,3 +31,21 @@ class JobOut(JobIn):
     model_config = {
         "from_attributes": True
     }
+
+
+class NodeAvailabilityUpdate(BaseModel):
+    node_id: str
+    cpu_available: float
+    mem_available: int
+    status: str
+
+class JobAssignmentIn(BaseModel):
+    job_id: str
+    node_id: str
+
+class JobStatusUpdate(BaseModel):
+    job_id: str
+    status: str
+    progress: float | None = None
+    cpu_time_sec: int | None = None
+    peak_memory_mb: int | None = None

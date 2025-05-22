@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use serde_json::{Value, json};
 use chrono::Utc;
+use crate::http_client::update_node_availability;
+
 
 // Import our new matchmaker
 use crate::matchmaker::{
@@ -224,6 +226,10 @@ async fn process_message(
                 
                 println!("Explicit availability update for {}: Status={}, CPU={:.1} cores, MEM={} MB", 
                     node_id, status, cpu_avail, mem_avail);
+                update_node_availability(
+                    &node_id, cpu_avail, mem_avail as u32, status
+                ).await?;
+
             }
         }
         

@@ -5,12 +5,12 @@ edition = "2021"
 
 [dependencies]
 eframe = { version = "0.23", features = ["wgpu"] }
-egui = "0.23"
+egui = "0.31"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tungstenite = "0.21"
+tungstenite = "0.26"
 url = "2.4"
-hostname = "0.3"
-ureq = "2"
-sysinfo = "0.29"
+hostname = "0.4"
+ureq = "3"
+sysinfo = "0.35"
 winapi = { version = "0.3.9", features = ["sysinfoapi", "minwindef", "processthreadsapi"] }

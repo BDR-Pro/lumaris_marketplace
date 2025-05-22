@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # 🔁 Python dependencies in /marketplace/distributed_engine
+  - package-ecosystem: "pip"
+    directory: "/marketplace/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    open-pull-requests-limit: 5
+
+  # 🦀 Rust dependencies in /marketplace/rust_gui
+  - package-ecosystem: "cargo"
+    directory: "/marketplace/rust_gui"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "cargo"
+    open-pull-requests-limit: 5
+
+
+  # 🦀 Rust dependencies in /marketplace/rust_gui
+  - package-ecosystem: "cargo"
+    directory: "/marketplace/node_ws"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "cargo"
+    open-pull-requests-limit: 5
+
+
+  # ⚙️ GitHub Actions workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "gh-actions"
+    open-pull-requests-limit: 3

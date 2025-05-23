@@ -2,16 +2,11 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy.orm import Session
-
 from admin_api.database import get_db
 from admin_api.models import JobAssignment, NodeCapability
-from admin_api.schemas import (
-    JobAssignmentIn,
-    JobStatusUpdate,
-    NodeAvailabilityUpdate,
-)
+from admin_api.schemas import JobAssignmentIn, JobStatusUpdate, NodeAvailabilityUpdate
+from fastapi import APIRouter, Depends, Header, HTTPException
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 

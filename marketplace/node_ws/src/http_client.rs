@@ -2,7 +2,7 @@ use serde::Serialize;
 use reqwest::Client;
 
 const API_BASE: &str = "http://localhost:8000/matchmaking"; // change if deployed
-const API_KEY: &str = "super-secret"; // match your Python backend
+const JWT_TOKEN: &str = "super-secret"; // match your Python backend
 
 #[derive(Serialize)]
 struct NodeAvailabilityUpdate {
@@ -43,7 +43,7 @@ pub async fn update_node_availability(
     let client = Client::new();
     let res = client
         .post(&format!("{}/node/update_availability", API_BASE))
-        .header("x-api-key", API_KEY)
+        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
         .json(&payload)
         .send()
         .await?;
@@ -61,7 +61,7 @@ pub async fn assign_job(job_id: &str, node_id: &str) -> Result<(), reqwest::Erro
     let client = Client::new();
     let res = client
         .post(&format!("{}/job/assign", API_BASE))
-        .header("x-api-key", API_KEY)
+        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
         .json(&payload)
         .send()
         .await?;
@@ -88,7 +88,7 @@ pub async fn update_job_status(
     let client = Client::new();
     let res = client
         .post(&format!("{}/job/status", API_BASE))
-        .header("x-api-key", API_KEY)
+        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
         .json(&payload)
         .send()
         .await?;

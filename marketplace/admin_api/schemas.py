@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 class StatUpdate(BaseModel):
     """Schema for incoming stats from a compute node."""
+
     node_id: str
     cpu: float
     mem: float
@@ -13,6 +14,7 @@ class StatUpdate(BaseModel):
 
 class NodeOut(BaseModel):
     """Schema for returning node information."""
+
     id: int
     hostname: str
     status: str
@@ -24,6 +26,7 @@ class NodeOut(BaseModel):
 
 class JobIn(BaseModel):
     """Schema for submitting a new job."""
+
     node_id: int
     status: str
     duration: float
@@ -32,6 +35,7 @@ class JobIn(BaseModel):
 
 class JobOut(JobIn):
     """Schema for returning a submitted job."""
+
     id: int
 
     model_config = {"from_attributes": True}
@@ -39,6 +43,7 @@ class JobOut(JobIn):
 
 class NodeAvailabilityUpdate(BaseModel):
     """Schema for updating node availability and capacity."""
+
     node_id: str
     cpu_available: float
     mem_available: int
@@ -47,12 +52,14 @@ class NodeAvailabilityUpdate(BaseModel):
 
 class JobAssignmentIn(BaseModel):
     """Schema for assigning a job to a node."""
+
     job_id: str
     node_id: str
 
 
 class JobStatusUpdate(BaseModel):
     """Schema for reporting job execution status."""
+
     job_id: str
     status: str
     progress: float | None = None

@@ -1,14 +1,15 @@
 """FastAPI router for handling compute node registration and status updates."""
 
-from typing import List
 import logging
+import uuid
+from datetime import datetime, timedelta
+from typing import List
 
+from admin_api.database import get_db
+from admin_api.models import Node, NodeToken
+from admin_api.schemas import NodeOut, StatUpdate
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-
-from admin_api.models import Node
-from admin_api.schemas import NodeOut, StatUpdate
-from admin_api.database import get_db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,3 +68,14 @@ def register_node(stat: StatUpdate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(node)
     return NodeOut.model_validate(node)
+
+
+@router.post("/token/{node_id}")
+def issue_token(node_id: str, db: Session = Depends(get_db)):
+    """issue a token for a compute node."""
+    token = str(uuid.uuid4())
+    expires = datetime.now() + timedelta(days=7)
+    db_token = NodeToken(token=token, node_id=node_id, expires_at=expires)
+    db.add(db_token)
+    db.commit()
+    return {"token": token, "expires_at": expires.isoformat()}

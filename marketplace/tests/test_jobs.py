@@ -1,5 +1,6 @@
 """Tests for the /jobs endpoints of the Admin API."""
 
+
 def test_list_jobs_returns_empty_list_initially(client):
     """Test that the jobs list is initially empty."""
     response = client.get("/jobs/")

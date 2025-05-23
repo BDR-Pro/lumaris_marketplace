@@ -3,12 +3,11 @@
 from unittest.mock import patch
 
 import pytest
+from admin_api.database import get_db
+from admin_api.models import Base
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-from admin_api.database import get_db
-from admin_api.models import Base
 
 # Patch app startup to skip real DB initialization
 with patch("admin_api.main.Base.metadata.create_all"):

@@ -2,12 +2,11 @@
 
 from typing import List
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-
 from admin_api.database import get_db
 from admin_api.models import Job
 from admin_api.schemas import JobIn, JobOut
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 

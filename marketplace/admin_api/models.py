@@ -1,15 +1,20 @@
+# pylint: disable=too-few-public-methods
 """SQLAlchemy models for the Admin API database schema."""
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float
+from sqlalchemy import ForeignKey as _ForeignKey
+from sqlalchemy import Integer, String
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import relationship as _relationship
 
 Base = declarative_base()
 
 
 class Node(Base):
     """Represents a computing node in the system."""
+
     __tablename__ = "nodes"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -19,8 +24,19 @@ class Node(Base):
     mem_usage = Column(Float)
 
 
+class NodeToken(Base):
+    """Represents a token for a compute node."""
+
+    __tablename__ = "node_tokens"
+    id = Column(Integer, primary_key=True)
+    token = Column(String, unique=True)
+    node_id = Column(String)
+    expires_at = Column(DateTime)
+
+
 class Job(Base):
     """Represents a compute job submitted to the system."""
+
     __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -32,6 +48,7 @@ class Job(Base):
 
 class JobAssignment(Base):
     """Tracks the assignment and execution state of a job."""
+
     __tablename__ = "job_assignments"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -45,6 +62,7 @@ class JobAssignment(Base):
 
 class NodeCapability(Base):
     """Represents the available resources of a node."""
+
     __tablename__ = "node_capabilities"
 
     id = Column(Integer, primary_key=True)

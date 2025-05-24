@@ -222,25 +222,29 @@ impl MatchMaker {
     }
     
     // Update job status
-    pub fn update_job_status(&mut self, job_id: u64, status: JobStatus) {
+    pub fn update_job_status(&mut self, job_id: u64, status: String) -> Result<(), String> {
+        // Find the job in running jobs
         if let Some(job) = self.running_jobs.get_mut(&job_id) {
-            job.status = status.clone();
-            println!("📝 Job {} status updated to {:?}", job_id, status);
-            
-            match status {
-                JobStatus::Completed | JobStatus::Failed => {
-                    // Remove from running jobs if complete or failed
-                    if let Some(mut job) = self.running_jobs.remove(&job_id) {
-                        job.completed_at = Some(chrono::Utc::now().timestamp() as u64);
-                        
-                        // In a full implementation, you might store this in a database
-                        println!("🏁 Job {} finished with status {:?}", job_id, status);
-                    }
-                }
-                _ => {}
+            // Update the status
+            match status.as_str() {
+                "running" => job.status = JobStatus::Running,
+                "completed" => job.status = JobStatus::Completed,
+                "failed" => job.status = JobStatus::Failed,
+                _ => return Err(format!("Invalid status: {}", status)),
             }
             
-            let _ = self.tx.send(MatchmakerMessage::JobStatusUpdate(job_id, status));
+            // Send a status update message
+            let status_json = serde_json::json!({
+                "type": "job_status_update",
+                "job_id": job_id,
+                "status": status
+            }).to_string();
+            
+            let _ = self.tx.send(status_json);
+            
+            Ok(())
+        } else {
+            Err(format!("Job {} not found", job_id))
         }
     }
     
@@ -255,6 +259,14 @@ impl MatchMaker {
     // Add a setter for tx
     pub fn set_tx(&mut self, tx: broadcast::Sender<String>) {
         self.tx = tx;
+    }
+    
+    // Add update_node_availability method
+    pub fn update_node_availability(&mut self, node_id: String, available: bool) {
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            node.available = available;
+            println!("Node {} availability updated to {}", node_id, available);
+        }
     }
 }
 

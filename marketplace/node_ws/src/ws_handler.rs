@@ -26,17 +26,18 @@ type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSen
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Main WebSocket server function
-pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> Result<()> {
+pub async fn run_ws_server(addr: &str, port: u16, matchmaker: SharedMatchMaker) -> Result<()> {
+    let addr = format!("{}:{}", addr, port);
     info!("🚀 WebSocket server listening on {}", addr);
     
     // Store active connections
     let connections: NodeConnections = Arc::new(Mutex::new(HashMap::new()));
     
     // Clone for event listener
-    let connections_for_events = connections.clone();
+    let _connections_for_events = connections.clone();
     
     // Create a broadcast channel for matchmaker events
-    let (tx, rx) = broadcast::channel::<String>(100);
+    let (tx, _rx) = broadcast::channel::<String>(100);
     
     // Listen for matchmaker events
     tokio::spawn(async move {
@@ -52,91 +53,26 @@ pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> Result<(
     });
     
     // Create a TCP listener
-    let listener = TcpListener::bind(addr).await?;
+    let listener = TcpListener::bind(&addr).await?;
     
     // Accept connections
     while let Ok((stream, addr)) = listener.accept().await {
         info!("New connection from: {}", addr);
         let peer = format!("{}", addr);
-        let matchmaker_clone = matchmaker.clone();
-        let connections_clone = connections.clone();
         
-        tokio::spawn(async move {
-            if let Err(e) = handle_websocket_connection(stream, peer, matchmaker_clone, connections_clone).await {
-                error!("Error processing connection: {:?}", e);
-            }
-        });
+        // Handle the WebSocket connection
+        tokio::spawn(handle_tcp_connection(stream, peer, connections.clone(), matchmaker.clone()));
     }
     
     Ok(())
 }
 
-// Handle a WebSocket connection
-async fn handle_websocket(
-    socket: warp::ws::WebSocket,
-    matchmaker: SharedMatchMaker,
-    mut rx: broadcast::Receiver<String>
-) {
-    info!("New WebSocket connection established");
-    
-    let (mut tx, mut rx_ws) = socket.split();
-    
-    // Handle incoming messages
-    tokio::task::spawn(async move {
-        while let Some(result) = rx_ws.next().await {
-            match result {
-                Ok(msg) => {
-                    if let Ok(text) = msg.to_str() {
-                        info!("Received message: {}", text);
-                        
-                        // Parse the message as JSON
-                        if let Ok(json) = serde_json::from_str::<Value>(text) {
-                            // Process the message based on its type
-                            if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
-                                match msg_type {
-                                    "node_status" => {
-                                        // Update node status in the matchmaker
-                                        if let (Some(node_id), Some(available)) = (
-                                            json.get("node_id").and_then(|n| n.as_str()),
-                                            json.get("available").and_then(|a| a.as_bool())
-                                        ) {
-                                            let mut mm = matchmaker.lock().unwrap();
-                                            mm.update_node_availability(node_id.to_string(), available);
-                                        }
-                                    },
-                                    _ => {
-                                        info!("Unknown message type: {}", msg_type);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                Err(e) => {
-                    error!("Error receiving message: {}", e);
-                    break;
-                }
-            }
-        }
-    });
-    
-    // Forward broadcast messages to this WebSocket
-    tokio::task::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            if let Err(e) = tx.send(warp::ws::Message::text(msg)).await {
-                error!("Error sending message: {}", e);
-                break;
-            }
-        }
-    });
-}
-
 // Handle a single WebSocket connection
-async fn handle_websocket_connection(
+async fn handle_tcp_connection(
     stream: TcpStream,
     peer_id: String,
-    matchmaker: SharedMatchMaker,
-    connections: NodeConnections
+    connections: NodeConnections,
+    matchmaker: SharedMatchMaker
 ) -> WsResult<()> {
     // Upgrade the TCP stream to a WebSocket connection
     let ws_stream = accept_async(stream).await?;
@@ -375,22 +311,33 @@ async fn handle_job_status_update(
 // Create a WebSocket handler for the matchmaker
 pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a channel for broadcasting messages
-    let (tx, rx) = broadcast::channel::<String>(100);
+    let (tx, _rx) = broadcast::channel::<String>(100);
     
     // Store the sender in the matchmaker
     {
         let mut mm = matchmaker.lock().unwrap();
-        mm.set_tx(tx);
+        mm.set_tx(tx.clone());
     }
     
     // Create the WebSocket handler
     warp::path("ws")
         .and(warp::ws())
-        .and(warp::any().map(move || {
-            let rx_clone = rx.resubscribe();
-            (Arc::clone(&matchmaker), rx_clone)
-        }))
-        .map(|ws: warp::ws::Ws, (matchmaker, rx)| {
-            ws.on_upgrade(move |socket| handle_websocket(socket, matchmaker, rx))
+        .and(with_matchmaker(matchmaker))
+        .and(with_broadcaster(tx))
+        .map(|ws: warp::ws::Ws, matchmaker, tx| {
+            ws.on_upgrade(move |socket| {
+                let rx = tx.subscribe();
+                handle_websocket(socket, matchmaker, rx)
+            })
         })
+}
+
+// Helper function to pass matchmaker to filter
+fn with_matchmaker(matchmaker: SharedMatchMaker) -> impl Filter<Extract = (SharedMatchMaker,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || matchmaker.clone())
+}
+
+// Helper function to pass broadcaster to filter
+fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (broadcast::Sender<String>,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || tx.clone())
 }

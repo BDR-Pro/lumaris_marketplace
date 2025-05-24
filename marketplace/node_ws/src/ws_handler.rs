@@ -9,7 +9,8 @@ use tokio::sync::Mutex as TokioMutex;
 use serde_json::{Value, json};
 use chrono::Utc;
 use crate::http_client::update_node_availability;
-
+use crate::error::{Result, NodeError};
+use log::{info, error, debug, warn};
 
 // Import our new matchmaker
 use crate::matchmaker::{
@@ -21,9 +22,10 @@ use crate::matchmaker::{
 type ConnectionId = String;
 type NodeConnections = Arc<TokioMutex<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Message>>>>;
 
-pub async fn start_ws_server() {
-    let listener = TcpListener::bind("127.0.0.1:9001").await.expect("Failed to bind");
-    println!("Listening on ws://127.0.0.1:9001");
+pub async fn start_ws_server() -> Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:9001").await
+        .map_err(|e| NodeError::IoError(e))?;
+    info!("Listening on ws://127.0.0.1:9001");
     
     // Create our matchmaker
     let (matchmaker, mut matchmaker_rx) = create_matchmaker();
@@ -38,7 +40,9 @@ pub async fn start_ws_server() {
             match msg {
                 MatchmakerMessage::JobStatusUpdate(job_id, status) => {
                     // Broadcast job status updates to relevant nodes
-                    handle_job_status_update(job_id, status, &connections_for_events).await;
+                    if let Err(e) = handle_job_status_update(job_id, status, &connections_for_events).await {
+                        error!("Failed to handle job status update: {:?}", e);
+                    }
                 }
                 _ => {} // Handle other message types as needed
             }
@@ -47,17 +51,19 @@ pub async fn start_ws_server() {
 
     // Accept incoming WebSocket connections
     while let Ok((stream, addr)) = listener.accept().await {
-        println!("New connection from: {}", addr);
+        info!("New connection from: {}", addr);
         let peer = format!("{}", addr);
         let matchmaker_clone = matchmaker.clone();
         let connections_clone = connections.clone();
         
         tokio::spawn(async move {
             if let Err(e) = handle_connection(stream, peer, matchmaker_clone, connections_clone).await {
-                println!("Error processing connection: {:?}", e);
+                error!("Error processing connection: {:?}", e);
             }
         });
     }
+    
+    Ok(())
 }
 
 async fn handle_connection(
@@ -68,7 +74,7 @@ async fn handle_connection(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Accept the WebSocket connection
     let ws_stream = accept_async(stream).await?;
-    println!("WebSocket connection established with: {}", peer_id);
+    info!("WebSocket connection established with: {}", peer_id);
     
     // Split the WebSocket into sender and receiver
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
@@ -100,7 +106,7 @@ async fn handle_connection(
                             process_message(&text, &peer_id, &matchmaker).await?;
                         }
                         Message::Close(_) => {
-                            println!("Connection closed by client: {}", peer_id);
+                            info!("Connection closed by client: {}", peer_id);
                             // Mark node as unavailable in the matchmaker
                             {
                                 let mut mm = matchmaker.lock().unwrap();
@@ -112,7 +118,7 @@ async fn handle_connection(
                     }
                 }
                 Err(e) => {
-                    println!("WebSocket error: {:?}", e);
+                    info!("WebSocket error: {:?}", e);
                     break;
                 }
             }
@@ -135,12 +141,12 @@ async fn handle_connection(
     tokio::select! {
         result = &mut send_task => {
             if let Err(e) = result? {
-                println!("Error in send task: {:?}", e);
+                info!("Error in send task: {:?}", e);
             }
         }
         result = &mut recv_task => {
             if let Err(e) = result? {
-                println!("Error in receive task: {:?}", e);
+                info!("Error in receive task: {:?}", e);
             }
         }
     }
@@ -191,7 +197,7 @@ async fn process_message(
                     mm.update_node(capabilities);
                 }
                 
-                println!("Updated node stats for {}: CPU={:.1}%, MEM={:.1}%", 
+                info!("Updated node stats for {}: CPU={:.1}%, MEM={:.1}%", 
                     node_id, cpu, mem);
             }
         }
@@ -224,7 +230,7 @@ async fn process_message(
                     mm.update_node(capabilities);
                 }
                 
-                println!("Explicit availability update for {}: Status={}, CPU={:.1} cores, MEM={} MB", 
+                info!("Explicit availability update for {}: Status={}, CPU={:.1} cores, MEM={} MB", 
                     node_id, status, cpu_avail, mem_avail);
                 update_node_availability(
                     &node_id, cpu_avail, mem_avail as u32, status
@@ -254,7 +260,7 @@ async fn process_message(
                     mm.update_job_status(job_id, job_status);
                 }
                 
-                println!("Job {} status updated to {}", job_id, status);
+                info!("Job {} status updated to {}", job_id, status);
             }
         }
         
@@ -304,12 +310,12 @@ async fn process_message(
                     mm.submit_job(job)
                 };
                 
-                println!("Job submitted with ID: {}", job_id);
+                info!("Job submitted with ID: {}", job_id);
             }
         }
         
         _ => {
-            println!("Unrecognized message type: {:?}", msg_type);
+            info!("Unrecognized message type: {:?}", msg_type);
         }
     }
     

@@ -4,55 +4,98 @@ mod auth;
 mod vm_manager;
 mod matchmaker;
 mod job_scheduler;
+mod http_client;
+mod error;
+mod config;
 
 use ws_handler::start_ws_server;
 use matchmaker::create_matchmaker;
 use job_scheduler::create_job_scheduler;
+use log::{info, error, debug, warn};
+use std::env;
+use error::Result;
+use config::Config;
 
 #[tokio::main]
 async fn main() {
-    println!("🚀 Starting Lumaris Marketplace Service");
+    // Load configuration
+    let config_path = env::var("LUMARIS_CONFIG")
+        .unwrap_or_else(|_| "../config.toml".to_string());
+    
+    let config = Config::load(config_path).unwrap_or_else(|e| {
+        eprintln!("Failed to load config: {}. Using default configuration.", e);
+        Config::default()
+    });
+    
+    // Initialize the logger
+    let log_level = match config.logging.level.to_lowercase().as_str() {
+        "debug" => log::LevelFilter::Debug,
+        "info" => log::LevelFilter::Info,
+        "warn" => log::LevelFilter::Warn,
+        "error" => log::LevelFilter::Error,
+        _ => log::LevelFilter::Info,
+    };
+    
+    let mut builder = env_logger::Builder::new();
+    builder.filter_level(log_level);
+    
+    if config.logging.console {
+        builder.init();
+    }
+    
+    info!("\ud83d\ude80 Starting Lumaris Marketplace Service");
+    info!("Configuration loaded from: {}", config_path);
     
     // Create the matchmaker
     let (matchmaker, _matchmaker_rx) = create_matchmaker();
-    println!("✅ Matchmaker initialized");
+    info!("\u2705 Matchmaker initialized");
     
     // Create the job scheduler
     let scheduler = create_job_scheduler(matchmaker.clone());
-    println!("✅ Job scheduler initialized");
+    info!("\u2705 Job scheduler initialized");
     
     // Start REST API for job submission
+    let rest_host = config.rest_api.host.clone();
+    let rest_port = config.rest_api.port;
+    
     tokio::spawn(async move {
-        println!("🔄 Starting REST API server on http://127.0.0.1:9002...");
-        start_rest_api(matchmaker.clone(), scheduler.clone()).await;
+        info!("\ud83d\udd04 Starting REST API server on http://{}:{}...", rest_host, rest_port);
+        if let Err(e) = start_rest_api(matchmaker.clone(), scheduler.clone()).await {
+            error!("REST API server error: {}", e);
+        }
     });
     
     // Start WebSocket server for node connections
-    println!("🔄 Starting WebSocket Server on ws://127.0.0.1:9001...");
-    start_ws_server().await;
+    let ws_host = config.node_ws.host.clone();
+    let ws_port = config.node_ws.port;
+    
+    info!("\ud83d\udd04 Starting WebSocket Server on ws://{}:{}...", ws_host, ws_port);
+    if let Err(e) = start_ws_server().await {
+        error!("WebSocket server error: {}", e);
+    }
 }
 
 async fn start_rest_api(
     matchmaker: matchmaker::SharedMatchMaker,
     scheduler: job_scheduler::SharedJobScheduler
-) {
+) -> Result<(), Box<dyn std::error::Error>> {
     use warp::{Filter, http::Response};
     use serde_json::json;
     
     // Route for submitting a new job
-    let submit_job = warp::path!("jobs")
+    let submit_job = warp::path!(\"jobs\")
         .and(warp::post())
         .and(warp::body::json())
         .map(move |payload: serde_json::Value| {
             let mut scheduler = scheduler.lock().unwrap();
             
             // Extract payload fields
-            let command = payload.get("command")
+            let command = payload.get(\"command\")
                 .and_then(|v| v.as_str())
-                .unwrap_or("default_command")
+                .unwrap_or(\"default_command\")
                 .to_string();
             
-            let args = payload.get("args")
+            let args = payload.get(\"args\")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
@@ -62,11 +105,11 @@ async fn start_rest_api(
                 })
                 .unwrap_or_else(Vec::new);
             
-            let input_data = payload.get("input_data")
+            let input_data = payload.get(\"input_data\")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             
-            let env_vars = payload.get("env_vars")
+            let env_vars = payload.get(\"env_vars\")
                 .and_then(|v| v.as_object())
                 .map(|obj| {
                     obj.iter()
@@ -77,13 +120,13 @@ async fn start_rest_api(
                 })
                 .unwrap_or_else(std::collections::HashMap::new);
             
-            let priority = payload.get("priority")
+            let priority = payload.get(\"priority\")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(1) as u8;
             
-            let user_id = payload.get("user_id")
+            let user_id = payload.get(\"user_id\")
                 .and_then(|v| v.as_str())
-                .unwrap_or("anonymous")
+                .unwrap_or(\"anonymous\")
                 .to_string();
             
             // Create job payload
@@ -101,8 +144,8 @@ async fn start_rest_api(
             Response::builder()
                 .status(200)
                 .body(json!({
-                    "job_id": job_id,
-                    "status": "scheduled"
+                    \"job_id\": job_id,
+                    \"status\": \"scheduled\"
                 }).to_string())
                 .unwrap()
         });
@@ -124,7 +167,7 @@ async fn start_rest_api(
                     Response::builder()
                         .status(404)
                         .body(json!({
-                            "error": "Job not found"
+                            \"error\": \"Job not found\"
                         }).to_string())
                         .unwrap()
                 }
@@ -155,15 +198,15 @@ async fn start_rest_api(
                 Response::builder()
                     .status(200)
                     .body(json!({
-                        "job_id": job_id,
-                        "status": "cancelled"
+                        \"job_id\": job_id,
+                        \"status\": \"cancelled\"
                     }).to_string())
                     .unwrap()
             } else {
                 Response::builder()
                     .status(404)
                     .body(json!({
-                        "error": "Job not found"
+                        \"error\": \"Job not found\"
                     }).to_string())
                     .unwrap()
             }
@@ -175,8 +218,8 @@ async fn start_rest_api(
             Response::builder()
                 .status(200)
                 .body(json!({
-                    "status": "healthy",
-                    "version": "1.0.0"
+                    \"status\": \"healthy\",
+                    \"version\": \"1.0.0\"
                 }).to_string())
                 .unwrap()
         });
@@ -192,4 +235,6 @@ async fn start_rest_api(
     warp::serve(routes)
         .run(([127, 0, 0, 1], 9002))
         .await;
+    
+    Ok(())
 }

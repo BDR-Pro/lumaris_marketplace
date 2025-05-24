@@ -136,27 +136,40 @@ Lumaris is a decentralized marketplace for computing resources, enabling individ
 
    ```bash
    git clone https://github.com/bdr-pro/lumaris_marketplace.git
+   cd lumaris_marketplace
    ```
 
-2. **Run Admin API**
+2. **Build All Components**
 
    ```bash
-   cd marketplace/admin_api
-   uvicorn main:app --reload
+   # Make the build script executable
+   chmod +x build.sh
+   
+   # Build all Rust components
+   ./build.sh build
+   
+   # Set up Python environment
+   ./build.sh setup-python
    ```
 
-3. **Run Node GUI**
+3. **Run Individual Components**
 
    ```bash
-   cd marketplace/rust_gui
-   cargo run
+   # Run Node WebSocket Server
+   ./build.sh node-ws
+   
+   # Run Node Dashboard GUI
+   ./build.sh gui
+   
+   # Run Admin API
+   ./build.sh admin-api
    ```
 
-4. **Start WebSocket Server**
+4. **Run All Components**
 
    ```bash
-   cd marketplace/node_ws
-   cargo run
+   # Build and run all components
+   ./build.sh all
    ```
 
 ---

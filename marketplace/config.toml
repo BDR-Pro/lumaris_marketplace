@@ -1,0 +1,30 @@
+# Lumaris Marketplace Configuration
+
+[admin_api]
+host = "127.0.0.1"
+port = 8000
+debug = true
+database_url = "sqlite:///marketplace.db"
+
+[node_ws]
+host = "127.0.0.1"
+port = 9001
+admin_api_url = "http://127.0.0.1:8000"
+
+[rest_api]
+host = "127.0.0.1"
+port = 9002
+
+[node_gui]
+ws_url = "ws://127.0.0.1:9001"
+update_interval_ms = 1000
+
+[distributed_engine]
+default_chunk_size = 1000
+max_parallel_chunks = 10
+
+[logging]
+level = "info"  # debug, info, warn, error
+file = "lumaris.log"
+console = true
+

@@ -1,61 +1,77 @@
-# =========================
-# RUST
-# =========================
-/target/                # Rust build artifacts
-**/*.rs.bk              # Rust backup files
-Cargo.lock              # Often ignored for libraries
 # Rust build artifacts
+/target/
 **/target/
-# any file resulting from a unit test of python pytest
-# or cargo test
-.coverage
-# Optional: exclude Rust IDE files
-/.idea/
-/*.iml
 
-# =========================
-# PYTHON
-# =========================
-# Bytecode & cache
+# Python artifacts
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.pyc
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual environments
-.venv/
 venv/
-env/
 ENV/
-*.env
-*.venv
-env.bak/
-venv.bak/
+env/
 
-# Logs and temporary
-*.log
-*.tmp
-
-# Database & local dev
-*.sqlite3
-*.db
-
-# Jupyter & notebooks
-.ipynb_checkpoints/
-
-# =========================
-# OS / EDITORS
-# =========================
-.DS_Store
-Thumbs.db
-ehthumbs.db
+# IDE files
+.idea/
+.vscode/
 *.swp
-*.bak
-*.old
-*.orig
+*.swo
+.DS_Store
 
-# =========================
-# Pydantic / FastAPI cache
-# =========================
-.pydantic/
+# Logs
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment variables
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.a
+*.so
+*.dylib
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Distribution directories
+dist/
+build/
+
+# Cargo.lock is included for libraries
+# Cargo.lock
+

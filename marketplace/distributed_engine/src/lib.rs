@@ -3,6 +3,12 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
+pub mod error;
+pub use error::{EngineError, Result};
+
+#[cfg(test)]
+mod tests;
+
 // Define job chunking and distributed execution types
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

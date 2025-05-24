@@ -1,57 +1,51 @@
 // File: marketplace/node_ws/src/ws_handler.rs (updated)
 
 use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{accept_async, tungstenite::Message};
-use futures_util::{StreamExt, SinkExt};
-use std::collections::HashMap;
+use tokio::sync::Mutex;
+use tokio_tungstenite::{accept_async, tungstenite::protocol::Message};
+use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
-use tokio::sync::Mutex as TokioMutex;
-use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::time::Duration;
+use tokio::time::sleep;
+use tokio::sync::broadcast;
+use warp::Filter;
+use log::{info, error, debug};
+use serde_json::{json, Value};
 use chrono::Utc;
-use crate::http_client::{update_node_availability, update_job_status};
-use crate::error::{Result, NodeError};
-use log::{info, error, debug, warn};
 
-// Import our new matchmaker
 use crate::matchmaker::{
-    SharedMatchMaker, create_matchmaker, NodeCapabilities, 
-    Job, JobRequirements, JobStatus, MatchmakerMessage
+    SharedMatchMaker, NodeCapabilities, 
+    JobStatus, MatchmakerMessage
 };
 
 // Type aliases for clarity
-type NodeConnections = Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
+type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Main WebSocket server function
-pub async fn start_ws_server(host: &str, port: u16, matchmaker: SharedMatchMaker) -> Result<()> {
-    let addr = format!("{}:{}", host, port);
-    let listener = TcpListener::bind(&addr).await?;
-    
+pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> WsResult<()> {
     info!("🚀 WebSocket server listening on {}", addr);
     
     // Store active connections
-    let connections: NodeConnections = Arc::new(TokioMutex::new(HashMap::new()));
+    let connections: NodeConnections = Arc::new(Mutex::new(HashMap::new()));
     
     // Clone for event listener
     let connections_for_events = connections.clone();
     
-    // Listen for matchmaker events
-    let (_, mut rx) = {
-        let matchmaker_guard = matchmaker.lock().unwrap();
-        (Arc::clone(&matchmaker), rx)
-    };
+    // Create a broadcast channel for matchmaker events
+    let (tx, rx) = broadcast::channel::<String>(100);
     
-    // Spawn a task to handle matchmaker events
+    // Listen for matchmaker events
     tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
-            match msg {
-                MatchmakerMessage::JobStatusUpdate(job_id, status) => {
-                    if let Err(e) = handle_job_status_update(job_id, status, &connections_for_events).await {
-                        error!("Failed to handle job status update: {:?}", e);
-                    }
-                }
-                _ => {} // Handle other message types as needed
-            }
+        // In a real implementation, you would listen for events from the matchmaker
+        // and broadcast them to all connected clients
+        loop {
+            sleep(Duration::from_secs(10)).await;
+            let _ = tx.send(json!({
+                "type": "heartbeat",
+                "timestamp": Utc::now().timestamp()
+            }).to_string());
         }
     });
 
@@ -70,6 +64,66 @@ pub async fn start_ws_server(host: &str, port: u16, matchmaker: SharedMatchMaker
     }
     
     Ok(())
+}
+
+// Handle a WebSocket connection
+async fn handle_websocket(
+    socket: warp::ws::WebSocket,
+    matchmaker: SharedMatchMaker,
+    mut rx: broadcast::Receiver<String>
+) {
+    info!("New WebSocket connection established");
+    
+    let (mut tx, mut rx_ws) = socket.split();
+    
+    // Handle incoming messages
+    tokio::task::spawn(async move {
+        while let Some(result) = rx_ws.next().await {
+            match result {
+                Ok(msg) => {
+                    if let Ok(text) = msg.to_str() {
+                        info!("Received message: {}", text);
+                        
+                        // Parse the message as JSON
+                        if let Ok(json) = serde_json::from_str::<Value>(text) {
+                            // Process the message based on its type
+                            if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                                match msg_type {
+                                    "node_status" => {
+                                        // Update node status in the matchmaker
+                                        if let (Some(node_id), Some(available)) = (
+                                            json.get("node_id").and_then(|n| n.as_str()),
+                                            json.get("available").and_then(|a| a.as_bool())
+                                        ) {
+                                            let mut mm = matchmaker.lock().unwrap();
+                                            mm.update_node_availability(node_id.to_string(), available);
+                                        }
+                                    },
+                                    _ => {
+                                        info!("Unknown message type: {}", msg_type);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+    
+    // Forward broadcast messages to this WebSocket
+    tokio::task::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Err(e) = tx.send(warp::ws::Message::text(msg)).await {
+                error!("Error sending message: {}", e);
+                break;
+            }
+        }
+    });
 }
 
 // Handle a single WebSocket connection
@@ -316,7 +370,7 @@ async fn handle_job_status_update(
 // Create a WebSocket handler for the matchmaker
 pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a channel for broadcasting messages
-    let (tx, rx) = tokio::sync::broadcast::channel::<String>(100);
+    let (tx, rx) = broadcast::channel::<String>(100);
     
     // Store the sender in the matchmaker
     {
@@ -327,7 +381,10 @@ pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = 
     // Create the WebSocket handler
     warp::path("ws")
         .and(warp::ws())
-        .and(warp::any().map(move || (Arc::clone(&matchmaker), rx.clone())))
+        .and(warp::any().map(move || {
+            let rx_clone = rx.subscribe();
+            (Arc::clone(&matchmaker), rx_clone)
+        }))
         .map(|ws: warp::ws::Ws, (matchmaker, rx)| {
             ws.on_upgrade(move |socket| handle_websocket(socket, matchmaker, rx))
         })

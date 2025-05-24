@@ -360,15 +360,15 @@ impl DistributedJobManager {
     }
     
     fn get_job_chunks(&self, job_id: u64) -> Option<&Vec<JobChunk>> {
-        self.job_chunks.get(&job_id)
+        self.chunks_by_job.get(&job_id)
     }
     
     fn get_job_results(&self, job_id: u64) -> Option<&Vec<JobResult>> {
-        self.job_results.get(&job_id)
+        self.results_by_job.get(&job_id)
     }
     
     fn get_or_create_job_results(&mut self, job_id: u64) -> &mut Vec<JobResult> {
-        self.job_results
+        self.results_by_job
             .entry(job_id)
             .or_default()
     }

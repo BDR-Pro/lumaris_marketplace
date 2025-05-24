@@ -2,6 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use chrono;
 
 pub mod error;
 pub use error::{EngineError, Result};
@@ -359,24 +360,112 @@ impl DistributedJobManager {
         self.results_by_job.remove(&job_id);
     }
     
-    fn get_job_chunks(&self, job_id: u64) -> Option<&Vec<JobChunk>> {
-        self.chunks_by_job.get(&job_id)
-    }
-    
     fn get_job_results(&self, job_id: u64) -> Option<&Vec<JobResult>> {
         self.results_by_job.get(&job_id)
     }
-    
+
+    #[allow(dead_code)]
+    fn get_job_chunks(&self, job_id: u64) -> Option<&Vec<JobChunk>> {
+        self.chunks_by_job.get(&job_id)
+    }
+
+    #[allow(dead_code)]
     fn get_or_create_job_results(&mut self, job_id: u64) -> &mut Vec<JobResult> {
         self.results_by_job
             .entry(job_id)
             .or_default()
     }
-    
+
+    #[allow(dead_code)]
     fn get_job_results_mut(&mut self, job_id: u64) -> &mut Vec<JobResult> {
         self.results_by_job
             .entry(job_id)
             .or_default()
+    }
+    
+    fn add_job_chunk(&mut self, job_id: u64, chunk: JobChunk) {
+        self.chunks_by_job
+            .entry(job_id)
+            .or_default()
+            .push(chunk);
+    }
+    
+    fn add_chunk_to_job(&mut self, job_id: u64, chunk: JobChunk) {
+        self.chunks_by_job
+            .entry(job_id)
+            .or_default()
+            .push(chunk);
+    }
+    
+    fn add_job_result(&mut self, job_id: u64, result: JobResult) {
+        self.results_by_job
+            .entry(job_id)
+            .or_default()
+            .push(result);
+    }
+    
+    fn create_job_chunks(&mut self, job_id: u64, job_data: &JobData) -> Vec<JobChunk> {
+        let chunks = self.job_splitter.split_job(job_data);
+        
+        // Store chunks for this job
+        self.chunks_by_job
+            .entry(job_id)
+            .or_default()
+            .extend(chunks.clone());
+            
+        chunks
+    }
+    
+    fn process_job(&mut self, job_id: u64, job_data: &JobData) -> Vec<JobResult> {
+        // Create chunks for this job
+        let chunks = self.create_job_chunks(job_id, job_data);
+        
+        // Process each chunk and collect results
+        let mut results = Vec::new();
+        
+        for chunk in chunks {
+            // In a real system, this would be distributed to worker nodes
+            // For now, we process locally
+            let result = self.process_chunk(job_id, &chunk);
+            results.push(result.clone());
+            
+            // Store the result
+            self.add_job_result(job_id, result);
+        }
+        
+        // Return all results
+        results
+    }
+    
+    fn process_chunk(&self, job_id: u64, chunk: &JobChunk) -> JobResult {
+        // In a real system, this would be sent to a worker node
+        // For now, we just simulate processing
+        
+        // Call the processor to handle this chunk
+        let result_data = self.job_processor.process_chunk(job_id, chunk);
+        
+        JobResult {
+            job_id,
+            chunk_id: chunk.chunk_id,
+            result_data,
+            timestamp: chrono::Utc::now().timestamp(),
+        }
+    }
+    
+    fn add_job_chunk_result(&mut self, job_id: u64, chunk_id: u64, result: JobResult) {
+        self.chunks_by_job
+            .entry(job_id)
+            .or_default();
+            
+        // Find the chunk and update its result
+        if let Some(chunks) = self.chunks_by_job.get_mut(&job_id) {
+            if let Some(chunk) = chunks.iter_mut().find(|c| c.chunk_id == chunk_id) {
+                chunk.result = Some(result.clone());
+            }
+        }
+        
+        // Also store in results collection
+        self.add_job_result(job_id, result);
     }
 }
 

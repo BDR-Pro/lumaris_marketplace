@@ -26,29 +26,34 @@ impl App for NodeDashboard {
                 ui.add_space(20.0);
 
                 if let Ok(stats) = self.stats.try_lock() {
-                    let stats = stats.clone();
+                    let stats_copy = Stats {
+                        node_id: stats.node_id.clone(),
+                        cpu: stats.cpu,
+                        mem: stats.mem,
+                        funds: stats.funds,
+                    };
 
                     ui.group(|ui| {
                         ui.style_mut().spacing.item_spacing = egui::vec2(10.0, 15.0);
 
                         ui.label(
-                            egui::RichText::new(format!("🧠 CPU Usage:   {:.1}%", stats.cpu))
+                            egui::RichText::new(format!("🧠 CPU Usage:   {:.1}%", stats_copy.cpu))
                                 .size(22.0)
                                 .monospace(),
                         );
                         ui.label(
-                            egui::RichText::new(format!("💾 Memory Usage: {:.1}%", stats.mem))
+                            egui::RichText::new(format!("💾 Memory Usage: {:.1}%", stats_copy.mem))
                                 .size(22.0)
                                 .monospace(),
                         );
                         ui.label(
-                            egui::RichText::new(format!("💰 Earnings:     ${:.2}", stats.funds))
+                            egui::RichText::new(format!("💰 Earnings:     ${:.2}", stats_copy.funds))
                                 .size(22.0)
                                 .monospace(),
                         );
                         ui.add_space(10.0);
                         ui.label(
-                            egui::RichText::new(format!("🔗 Node ID: {}", stats.node_id))
+                            egui::RichText::new(format!("🔗 Node ID: {}", stats_copy.node_id))
                                 .size(18.0)
                                 .italics(),
                         );

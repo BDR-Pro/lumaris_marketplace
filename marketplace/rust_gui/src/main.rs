@@ -3,7 +3,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod stats_sender;
-use stats_sender::{spawn_stats_sender, Stats};
+use stats_sender::StatsSender;
+
+#[derive(Default)]
+struct Stats {
+    pub node_id: String,
+    pub cpu: f32,
+    pub mem: f32,
+    pub funds: f32,
+}
 
 #[derive(Default)]
 struct NodeDashboard {
@@ -62,8 +70,10 @@ impl App for NodeDashboard {
 
 fn main() -> Result<(), eframe::Error> {
     let stats = Arc::new(Mutex::new(Stats::default()));
-    let stats_clone = Arc::clone(&stats);
-    spawn_stats_sender(stats_clone);
+    
+    // Start the stats sender
+    let stats_sender = StatsSender::new("ws://127.0.0.1:9001", "local-node", 5000);
+    stats_sender.start();
 
     let options = NativeOptions {
         drag_and_drop_support: false,

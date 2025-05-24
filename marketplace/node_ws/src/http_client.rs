@@ -1,96 +1,64 @@
-// File: marketplace/node_ws/src/http_client.rs
-
-use crate::error::{Result, NodeError};
 use log::{info, error, debug};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use tokio::task;
+use crate::error::{NodeError, Result};
 
-const ADMIN_API_URL: &str = "http://127.0.0.1:8000";
-
-/// Update node availability in the admin API
-pub async fn update_node_availability(
-    node_id: &str,
-    cpu_available: f64,
-    mem_available: u32,
-    status: &str
-) -> Result<()> {
-    let url = format!("{}/nodes/update", ADMIN_API_URL);
-    
-    debug!("Updating node availability for {}: CPU={}, MEM={}, status={}", 
-        node_id, cpu_available, mem_available, status);
+pub async fn update_node_status(
+    api_url: &str, 
+    node_id: &str, 
+    cpu_usage: f32, 
+    memory_usage: f32, 
+    available: bool
+) -> Result<bool> {
+    let url = format!("{}/nodes/{}/status", api_url, node_id);
     
     // Create the payload
     let payload = json!({
-        "node_id": node_id,
-        "cpu_available": cpu_available,
-        "mem_available": mem_available,
-        "status": status,
+        "cpu_usage": cpu_usage,
+        "memory_usage": memory_usage,
+        "available": available,
         "timestamp": chrono::Utc::now().timestamp()
     });
     
+    debug!("Updating node status: {}", payload);
+    
+    let url = url.clone();
+    
     // Send the request
     match ureq::post(&url)
-        .set("Content-Type", "application/json")
+        .content_type("application/json")
         .send_json(payload)
     {
         Ok(_) => {
-            debug!("Successfully updated node availability for {}", node_id);
-            Ok(())
+            debug!("Node status updated successfully");
+            Ok(true)
         },
         Err(e) => {
-            error!("Failed to update node availability: {}", e);
-            Err(NodeError::HttpClientError(format!("Failed to update node availability: {}", e)))
+            error!("Failed to update node status: {}", e);
+            Err(NodeError::ApiError(format!("Failed to update node status: {}", e)))
         }
     }
 }
 
-/// Get job details from the admin API
-pub async fn get_job_details(job_id: u64) -> Result<serde_json::Value> {
-    let url = format!("{}/jobs/{}", ADMIN_API_URL, job_id);
-    
-    debug!("Getting job details for job ID: {}", job_id);
-    
-    // Send the request
-    match ureq::get(&url).call() {
-        Ok(response) => {
-            let json: serde_json::Value = response.into_json()
-                .map_err(|e| NodeError::SerializationError(e))?;
-            
-            debug!("Successfully retrieved job details for job ID: {}", job_id);
-            Ok(json)
-        },
-        Err(e) => {
-            error!("Failed to get job details: {}", e);
-            Err(NodeError::HttpClientError(format!("Failed to get job details: {}", e)))
-        }
-    }
-}
-
-/// Assign a job to a node
 pub async fn assign_job(
-    node_id: &str, 
-    job_id: u64, 
-    chunk_id: u64, 
-    payload: &HashMap<String, Value>
+    api_url: &str,
+    job_id: u64,
+    node_id: &str,
+    job_data: Value
 ) -> Result<bool> {
-    let url = format!("http://127.0.0.1:8000/nodes/{}/jobs", node_id);
+    let url = format!("{}/jobs/{}/assign/{}", api_url, job_id, node_id);
     
-    let job_data = json!({
-        "job_id": job_id,
-        "chunk_id": chunk_id,
-        "payload": payload
-    });
+    // Create the job assignment payload
+    let job_json = serde_json::to_string(&job_data).map_err(|e| {
+        NodeError::SerializationError(e)
+    })?;
     
-    debug!("Assigning job {} to node {}", job_id, node_id);
-    
-    // In a real implementation, this would be an async HTTP request
-    // For now, we'll use a blocking request in a separate thread
-    let job_json = job_data.to_string();
+    let url = url.clone();
     
     // Spawn a blocking task for the HTTP request
     let result = tokio::task::spawn_blocking(move || {
         match ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .content_type("application/json")
             .send_string(&job_json)
         {
             Ok(_) => Ok(true),
@@ -99,33 +67,42 @@ pub async fn assign_job(
     }).await;
     
     match result {
-        Ok(inner_result) => inner_result,
+        Ok(res) => res,
         Err(e) => Err(NodeError::ApiError(format!("Task join error: {}", e)))
     }
 }
 
-/// Update job status in the admin API
 pub async fn update_job_status(
-    job_id: u64, 
-    status: &str, 
-    result: Option<Value>
+    api_url: &str,
+    job_id: u64,
+    status: &str,
+    result_data: Option<Value>
 ) -> Result<Value> {
-    let url = format!("http://127.0.0.1:8000/jobs/{}/status", job_id);
+    let url = format!("{}/jobs/{}/status", api_url, job_id);
     
-    let status_data = json!({
-        "status": status,
-        "result": result
-    });
+    // Create the status update payload
+    let status_payload = match result_data {
+        Some(data) => json!({
+            "status": status,
+            "result": data,
+            "timestamp": chrono::Utc::now().timestamp()
+        }),
+        None => json!({
+            "status": status,
+            "timestamp": chrono::Utc::now().timestamp()
+        })
+    };
     
-    debug!("Updating job {} status to {}", job_id, status);
+    let status_json = serde_json::to_string(&status_payload).map_err(|e| {
+        NodeError::SerializationError(e)
+    })?;
     
-    // In a real implementation, this would be an async HTTP request
-    let status_json = status_data.to_string();
+    let url = url.clone();
     
     // Spawn a blocking task for the HTTP request
     let result = tokio::task::spawn_blocking(move || {
         match ureq::post(&url)
-            .set("Content-Type", "application/json")
+            .content_type("application/json")
             .send_string(&status_json)
         {
             Ok(response) => {
@@ -139,7 +116,8 @@ pub async fn update_job_status(
     }).await;
     
     match result {
-        Ok(inner_result) => inner_result,
+        Ok(res) => res,
         Err(e) => Err(NodeError::ApiError(format!("Task join error: {}", e)))
     }
 }
+

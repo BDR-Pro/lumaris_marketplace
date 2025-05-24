@@ -12,6 +12,9 @@ pub enum NodeError {
     #[error("HTTP client error: {0}")]
     HttpClientError(String),
     
+    #[error("API error: {0}")]
+    ApiError(String),
+    
     #[error("Authentication error: {0}")]
     AuthError(String),
     
@@ -32,4 +35,3 @@ pub enum NodeError {
 }
 
 pub type Result<T> = std::result::Result<T, NodeError>;
-

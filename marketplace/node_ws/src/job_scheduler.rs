@@ -10,7 +10,6 @@ use distributed_engine::{
 };
 use crate::http_client::assign_job;
 
-
 // Job scheduler is responsible for:
 // 1. Receiving job submissions
 // 2. Using the distributed engine to split jobs into chunks
@@ -224,5 +223,12 @@ pub type SharedJobScheduler = Arc<Mutex<JobScheduler>>;
 
 // Helper to create a new job scheduler
 pub fn create_job_scheduler(matchmaker: SharedMatchMaker) -> SharedJobScheduler {
-    Arc::new(Mutex::new(JobScheduler::new(matchmaker)))
+    let scheduler = JobScheduler {
+        jobs: HashMap::new(),
+        next_job_id: 1,
+        matchmaker,
+        job_manager: Arc::new(Mutex::new(DistributedJobManager::new_default())),
+    };
+    
+    Arc::new(Mutex::new(scheduler))
 }

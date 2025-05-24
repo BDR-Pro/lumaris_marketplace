@@ -59,7 +59,7 @@ async fn main() {
     let rest_port = config.rest_api.port;
     
     tokio::spawn(async move {
-        info!("🔄 Starting REST API server on http://{}:{}...", rest_host, rest_port);
+        info!("🔄 Starting REST API server on {}:{} (HTTP)...", rest_host, rest_port);
         if let Err(e) = start_rest_api(matchmaker.clone(), scheduler.clone()).await {
             error!("REST API server error: {}", e);
         }
@@ -69,7 +69,7 @@ async fn main() {
     let ws_host = config.node_ws.host.clone();
     let ws_port = config.node_ws.port;
     
-    info!("🔄 Starting WebSocket Server on ws://{}:{}...", ws_host, ws_port);
+    info!("🔄 Starting WebSocket Server on {}:{} (WS)...", ws_host, ws_port);
     if let Err(e) = start_ws_server().await {
         error!("WebSocket server error: {}", e);
     }

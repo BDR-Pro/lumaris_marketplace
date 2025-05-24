@@ -126,8 +126,8 @@ def submit_job(request):
                         request,
                         "Job saved locally but failed to submit to processing queue.",
                     )
-            except requests.RequestException as e:
-                messages.error(request, f"Error submitting job: {str(e)}")
+            except requests.RequestException:
+                messages.error(request, "Error submitting job:")
             return redirect("buyer_dashboard")
     else:
         form = JobSubmissionForm()
@@ -155,8 +155,8 @@ def api_nodes(_request):
         if response.status_code == 200:
             return JsonResponse(response.json(), safe=False)
         return JsonResponse({"error": "Failed to fetch nodes"}, status=500)
-    except requests.RequestException as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except requests.RequestException:
+        return JsonResponse({"error": "Failed to fetch nodes"}, status=500)
 
 
 def api_jobs(_request):
@@ -166,8 +166,8 @@ def api_jobs(_request):
         if response.status_code == 200:
             return JsonResponse(response.json(), safe=False)
         return JsonResponse({"error": "Failed to fetch jobs"}, status=500)
-    except requests.RequestException as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    except requests.RequestException:
+        return JsonResponse({"error": "Failed to fetch nodes"}, status=500)
 
 
 def signup_view(request):

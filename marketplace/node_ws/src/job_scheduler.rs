@@ -30,7 +30,7 @@ pub struct ScheduledJob {
 }
 
 pub struct JobScheduler {
-    scheduled_jobs: HashMap<u64, ScheduledJob>,
+    jobs: HashMap<u64, ScheduledJob>,
     next_job_id: u64,
     matchmaker: SharedMatchMaker,
     job_manager: Arc<Mutex<DistributedJobManager>>,
@@ -39,7 +39,7 @@ pub struct JobScheduler {
 impl JobScheduler {
     pub fn new(matchmaker: SharedMatchMaker) -> Self {
         Self {
-            scheduled_jobs: HashMap::new(),
+            jobs: HashMap::new(),
             next_job_id: 1,
             matchmaker,
             job_manager: Arc::new(Mutex::new(DistributedJobManager::new_default())),
@@ -69,7 +69,7 @@ impl JobScheduler {
             user_id,
         };
         
-        self.scheduled_jobs.insert(job_id, scheduled_job);
+        self.jobs.insert(job_id, scheduled_job);
         
         // Process chunks that don't have dependencies
         let initial_chunks: Vec<_> = chunks.iter()
@@ -119,28 +119,23 @@ impl JobScheduler {
         }
     }
     
-    pub fn update_chunk_status(&mut self, chunk_id: u64, parent_job_id: u64, status: &str) {
-        if let Some(job) = self.scheduled_jobs.get_mut(&parent_job_id) {
+    // Update the status of a job chunk
+    pub fn update_chunk_status(&mut self, _chunk_id: u64, parent_job_id: u64, status: &str) {
+        // Find the parent job
+        if let Some(job) = self.jobs.get_mut(&parent_job_id) {
+            // Update the job status based on chunk status
             match status {
                 "completed" => {
-                    job.chunks_completed += 1;
-                }
+                    // Check if all chunks are completed
+                    job.completed_chunks += 1;
+                    if job.completed_chunks >= job.total_chunks {
+                        job.status = "completed".to_string();
+                    }
+                },
                 "failed" => {
-                    job.chunks_failed += 1;
-                }
-                _ => {}
-            }
-            
-            // Update overall job status
-            if job.chunks_completed + job.chunks_failed == job.chunks_total {
-                if job.chunks_failed > 0 {
                     job.status = "failed".to_string();
-                } else {
-                    job.status = "completed".to_string();
-                }
-                job.completed_at = Some(chrono::Utc::now().timestamp() as u64);
-                
-                println!("Job {} completed with status: {}", parent_job_id, job.status);
+                },
+                _ => {}
             }
         }
     }
@@ -169,11 +164,10 @@ impl JobScheduler {
     
     fn schedule_dependent_chunks(&mut self, job_id: u64, completed_chunk_id: u64) {
         // Get completed chunks for this job
-        let completed_chunks: Vec<u64> = self.scheduled_jobs
+        let completed_chunks: Vec<u64> = self.jobs
             .get(&job_id)
-            .map(|job| {
+            .map(|_job| {
                 // In a real implementation, we'd query all completed chunks
-                // For now, just use the one we know completed
                 vec![completed_chunk_id]
             })
             .unwrap_or_default();
@@ -193,11 +187,11 @@ impl JobScheduler {
     }
     
     pub fn get_job_status(&self, job_id: u64) -> Option<&ScheduledJob> {
-        self.scheduled_jobs.get(&job_id)
+        self.jobs.get(&job_id)
     }
     
     pub fn get_all_jobs(&self) -> Vec<&ScheduledJob> {
-        self.scheduled_jobs.values().collect()
+        self.jobs.values().collect()
     }
     
     pub fn cancel_job(&mut self, job_id: u64) -> bool {
@@ -208,7 +202,7 @@ impl JobScheduler {
         }
         
         // Update scheduler status
-        if let Some(job) = self.scheduled_jobs.get_mut(&job_id) {
+        if let Some(job) = self.jobs.get_mut(&job_id) {
             job.status = "cancelled".to_string();
             job.completed_at = Some(chrono::Utc::now().timestamp() as u64);
             true
@@ -224,7 +218,7 @@ pub type SharedJobScheduler = Arc<Mutex<JobScheduler>>;
 // Helper to create a new job scheduler
 pub fn create_job_scheduler(matchmaker: SharedMatchMaker) -> SharedJobScheduler {
     let scheduler = JobScheduler {
-        scheduled_jobs: HashMap::new(),
+        jobs: HashMap::new(),
         next_job_id: 1,
         matchmaker,
         job_manager: Arc::new(Mutex::new(DistributedJobManager::new_default())),

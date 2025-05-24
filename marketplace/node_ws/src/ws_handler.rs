@@ -172,6 +172,105 @@ async fn handle_tcp_connection(
     Ok(())
 }
 
+// Handle a WebSocket connection
+async fn handle_websocket(
+    socket: warp::ws::WebSocket,
+    matchmaker: SharedMatchMaker,
+    mut rx: broadcast::Receiver<String>
+) {
+    info!("New WebSocket connection established");
+    
+    let (mut tx, mut rx_ws) = socket.split();
+    
+    // Handle incoming messages
+    let matchmaker_clone = matchmaker.clone();
+    tokio::task::spawn(async move {
+        while let Some(result) = rx_ws.next().await {
+            match result {
+                Ok(msg) => {
+                    if let Ok(text) = msg.to_str() {
+                        info!("Received message: {}", text);
+                        
+                        // Parse the message as JSON
+                        if let Ok(json) = serde_json::from_str::<Value>(text) {
+                            // Process the message based on its type
+                            if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                                match msg_type {
+                                    "node_registration" => {
+                                        // Handle node registration
+                                        if let Some(node_id) = json.get("node_id").and_then(|n| n.as_str()) {
+                                            let cpu_cores = json.get("cpu_cores").and_then(|c| c.as_f64()).unwrap_or(1.0) as f32;
+                                            let memory_mb = json.get("memory_mb").and_then(|m| m.as_u64()).unwrap_or(1024);
+                                            
+                                            let node = NodeCapabilities {
+                                                node_id: node_id.to_string(),
+                                                cpu_cores,
+                                                memory_mb,
+                                                available: true,
+                                                reliability_score: 1.0,
+                                                last_updated: Utc::now().timestamp() as u64,
+                                            };
+                                            
+                                            let mut mm = matchmaker_clone.lock().unwrap();
+                                            mm.register_node(node);
+                                        }
+                                    },
+                                    "node_status" => {
+                                        // Update node status
+                                        let cpu_usage = json.get("status").and_then(|s| s.get("cpu_usage").and_then(|c| c.as_f64())).unwrap_or(0.0) as f32;
+                                        let memory_usage = json.get("status").and_then(|s| s.get("memory_usage").and_then(|m| m.as_f64())).unwrap_or(0.0) as f32;
+                                        let available = json.get("status").and_then(|s| s.get("available").and_then(|a| a.as_bool())).unwrap_or(true);
+                                        
+                                        {
+                                            let mut matchmaker = matchmaker_clone.lock().unwrap();
+                                            if let Some(node) = matchmaker.get_node_by_id_mut(peer_id) {
+                                                // Update node capabilities based on current usage
+                                                node.available = available;
+                                                node.last_updated = Utc::now().timestamp() as u64;
+                                                
+                                                debug!("Updated node {} status: CPU {}%, Memory {}%, Available: {}", 
+                                                    peer_id, cpu_usage, memory_usage, available);
+                                            }
+                                        }
+                                    },
+                                    "job_status_update" => {
+                                        // Extract job ID and status
+                                        if let (Some(job_id), Some(status)) = (
+                                            json.get("job_id").and_then(|j| j.as_u64()),
+                                            json.get("status").and_then(|s| s.as_str())
+                                        ) {
+                                            // Update job status
+                                            let mut mm = matchmaker_clone.lock().unwrap();
+                                            let _ = mm.update_job_status(job_id, status.to_string());
+                                        }
+                                    },
+                                    _ => {
+                                        info!("Unknown message type: {}", msg_type);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+    
+    // Forward broadcast messages to this WebSocket
+    tokio::task::spawn(async move {
+        while let Ok(msg) = rx.recv().await {
+            if let Err(e) = tx.send(warp::ws::Message::text(msg)).await {
+                error!("Error sending message: {}", e);
+                break;
+            }
+        }
+    });
+}
+
 // Process incoming WebSocket messages
 async fn process_message(
     message: &str,
@@ -220,7 +319,7 @@ async fn process_message(
             // Update node status
             let cpu_usage = parsed["status"]["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
             let memory_usage = parsed["status"]["memory_usage"].as_f64().unwrap_or(0.0) as f32;
-            let available = parsed["status"]["available"].as_bool().unwrap_or(true);
+            let available = parsed["status"]["available"].and_then(|a| a.as_bool()).unwrap_or(true);
             
             {
                 let mut matchmaker = matchmaker.lock().unwrap();
@@ -324,7 +423,7 @@ pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = 
         .and(warp::ws())
         .and(with_matchmaker(matchmaker))
         .and(with_broadcaster(tx))
-        .map(|ws: warp::ws::Ws, matchmaker, tx| {
+        .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>| {
             ws.on_upgrade(move |socket| {
                 let rx = tx.subscribe();
                 handle_websocket(socket, matchmaker, rx)

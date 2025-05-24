@@ -79,44 +79,38 @@ impl DefaultJobSplitter {
 
 impl JobSplitter for DefaultJobSplitter {
     fn split_job(&self, job_id: u64, payload: JobPayload) -> Vec<JobChunk> {
-        // Simple implementation - check if the job has data that can be chunked
-        if let Some(input_data) = &payload.input_data {
-            // Assuming input data is line-based (e.g., CSV)
-            let lines: Vec<&str> = input_data.lines().collect();
+        // If the payload has input data, split it by lines
+        if let Some(data) = &payload.input_data {
+            let lines: Vec<&str> = data.lines().collect();
             
-            if lines.len() <= self.chunk_size_threshold {
-                // Job is small enough, don't split
-                return vec![JobChunk {
-                    chunk_id: 1,
-                    parent_job_id: job_id,
-                    payload: payload.clone(),
-                    dependencies: vec![],
-                    estimated_work_units: lines.len() as u64,
-                }];
-            }
+            // Calculate number of chunks based on input size and threshold
+            let num_chunks = lines.len().div_ceil(self.chunk_size_threshold);
             
-            // Otherwise, split into chunks
-            let num_chunks = (lines.len() + self.chunk_size_threshold - 1) / self.chunk_size_threshold;
-            let mut chunks = Vec::with_capacity(num_chunks);
+            // Create chunks
+            let mut chunks = Vec::with_capacity(num_chunks + 1); // +1 for aggregator
             
-            for (i, chunk) in lines.chunks(self.chunk_size_threshold).enumerate() {
-                let chunk_id = (i + 1) as u64;
-                let chunk_data = chunk.join("\n");
+            for i in 0..num_chunks {
+                let start = i * self.chunk_size_threshold;
+                let end = std::cmp::min((i + 1) * self.chunk_size_threshold, lines.len());
                 
-                let mut chunk_payload = payload.clone();
-                chunk_payload.input_data = Some(chunk_data);
+                let chunk_data = lines[start..end].join("\n");
                 
-                // Add chunk metadata to args
-                chunk_payload.args.push(format!("--chunk-id={}", chunk_id));
-                chunk_payload.args.push(format!("--chunk-total={}", num_chunks));
+                let chunk_payload = JobPayload {
+                    command: payload.command.clone(),
+                    args: payload.args.clone(),
+                    input_data: Some(chunk_data),
+                    env_vars: payload.env_vars.clone(),
+                };
                 
-                chunks.push(JobChunk {
-                    chunk_id,
+                let chunk = JobChunk {
+                    chunk_id: (i + 1) as u64,
                     parent_job_id: job_id,
                     payload: chunk_payload,
-                    dependencies: vec![],
-                    estimated_work_units: chunk.len() as u64,
-                });
+                    dependencies: Vec::new(),
+                    estimated_work_units: (end - start) as u32,
+                };
+                
+                chunks.push(chunk);
             }
             
             // Create an aggregator chunk that will combine results
@@ -139,12 +133,12 @@ impl JobSplitter for DefaultJobSplitter {
             
             chunks
         } else {
-            // No data to split, return as a single chunk
+            // If no input data, just create a single chunk
             vec![JobChunk {
                 chunk_id: 1,
                 parent_job_id: job_id,
-                payload,
-                dependencies: vec![],
+                payload: payload.clone(),
+                dependencies: Vec::new(),
                 estimated_work_units: 100, // Default work units
             }]
         }
@@ -283,6 +277,8 @@ pub struct DistributedJobManager {
     result_aggregator: Box<dyn ResultAggregator>,
     chunks_by_job: HashMap<u64, Vec<JobChunk>>,
     results_by_job: HashMap<u64, Vec<JobResult>>,
+    job_chunks: HashMap<u64, Vec<JobChunk>>,
+    job_results: HashMap<u64, Vec<JobResult>>,
 }
 
 impl DistributedJobManager {
@@ -295,10 +291,14 @@ impl DistributedJobManager {
             result_aggregator,
             chunks_by_job: HashMap::new(),
             results_by_job: HashMap::new(),
+            job_chunks: HashMap::new(),
+            job_results: HashMap::new(),
         }
     }
     
-    pub fn default() -> Self {
+    /// Create a new DistributedJobManager with default implementations
+    #[must_use]
+    pub fn new_default() -> Self {
         Self::new(
             Box::new(DefaultJobSplitter::new(1000)),
             Box::new(DefaultResultAggregator)
@@ -362,18 +362,30 @@ impl DistributedJobManager {
         self.chunks_by_job.remove(&job_id);
         self.results_by_job.remove(&job_id);
     }
+    
+    fn get_job_chunks(&self, job_id: u64) -> Option<&Vec<JobChunk>> {
+        self.job_chunks.get(&job_id)
+    }
+    
+    fn get_job_results(&self, job_id: u64) -> Option<&Vec<JobResult>> {
+        self.job_results.get(&job_id)
+    }
+    
+    fn get_or_create_job_results(&mut self, job_id: u64) -> &mut Vec<JobResult> {
+        self.job_results
+            .entry(job_id)
+            .or_default()
+    }
 }
 
 // Utility functions
 
 pub fn estimate_chunk_size(data_size: usize, available_nodes: usize) -> usize {
-    if available_nodes <= 1 {
-        return data_size;
-    }
+    // Target slightly more chunks than nodes for better load balancing
+    let target_chunks = available_nodes.saturating_mul(2);
     
-    // Aim for a reasonable number of chunks based on nodes
-    let target_chunks = available_nodes * 2;
-    let chunk_size = (data_size + target_chunks - 1) / target_chunks;
+    // Calculate chunk size
+    let chunk_size = data_size.div_ceil(target_chunks);
     
     // Ensure chunk size is at least 100 records for efficiency
     std::cmp::max(chunk_size, 100)

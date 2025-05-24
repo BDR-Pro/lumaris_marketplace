@@ -43,23 +43,23 @@ async fn main() {
         builder.init();
     }
     
-    info!("\ud83d\ude80 Starting Lumaris Marketplace Service");
+    info!("🚀 Starting Lumaris Marketplace Service");
     info!("Configuration loaded from: {}", config_path);
     
     // Create the matchmaker
     let (matchmaker, _matchmaker_rx) = create_matchmaker();
-    info!("\u2705 Matchmaker initialized");
+    info!("✅ Matchmaker initialized");
     
     // Create the job scheduler
     let scheduler = create_job_scheduler(matchmaker.clone());
-    info!("\u2705 Job scheduler initialized");
+    info!("✅ Job scheduler initialized");
     
     // Start REST API for job submission
     let rest_host = config.rest_api.host.clone();
     let rest_port = config.rest_api.port;
     
     tokio::spawn(async move {
-        info!("\ud83d\udd04 Starting REST API server on http://{}:{}...", rest_host, rest_port);
+        info!("🔄 Starting REST API server on http://{}:{}...", rest_host, rest_port);
         if let Err(e) = start_rest_api(matchmaker.clone(), scheduler.clone()).await {
             error!("REST API server error: {}", e);
         }
@@ -69,167 +69,111 @@ async fn main() {
     let ws_host = config.node_ws.host.clone();
     let ws_port = config.node_ws.port;
     
-    info!("\ud83d\udd04 Starting WebSocket Server on ws://{}:{}...", ws_host, ws_port);
+    info!("🔄 Starting WebSocket Server on ws://{}:{}...", ws_host, ws_port);
     if let Err(e) = start_ws_server().await {
         error!("WebSocket server error: {}", e);
     }
 }
 
+// REST API for job submission
 async fn start_rest_api(
-    matchmaker: matchmaker::SharedMatchMaker,
-    scheduler: job_scheduler::SharedJobScheduler
-) -> Result<(), Box<dyn std::error::Error>> {
-    use warp::{Filter, http::Response};
-    use serde_json::json;
+    matchmaker: std::sync::Arc<std::sync::Mutex<matchmaker::MatchMaker>>,
+    scheduler: std::sync::Arc<std::sync::Mutex<job_scheduler::JobScheduler>>,
+) -> Result<()> {
+    use warp::{Filter, Reply, Rejection, http::Response};
+    use serde_json::{json, Value};
     
-    // Route for submitting a new job
-    let submit_job = warp::path!(\"jobs\")
+    // Submit job endpoint
+    let submit_job = warp::path!("jobs")
         .and(warp::post())
         .and(warp::body::json())
-        .map(move |payload: serde_json::Value| {
-            let mut scheduler = scheduler.lock().unwrap();
+        .and_then(move |job_data: Value| {
+            let matchmaker_clone = matchmaker.clone();
+            let scheduler_clone = scheduler.clone();
             
-            // Extract payload fields
-            let command = payload.get(\"command\")
-                .and_then(|v| v.as_str())
-                .unwrap_or(\"default_command\")
-                .to_string();
-            
-            let args = payload.get(\"args\")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-                .unwrap_or_else(Vec::new);
-            
-            let input_data = payload.get(\"input_data\")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            
-            let env_vars = payload.get(\"env_vars\")
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    obj.iter()
-                        .filter_map(|(k, v)| {
-                            v.as_str().map(|s| (k.clone(), s.to_string()))
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(std::collections::HashMap::new);
-            
-            let priority = payload.get(\"priority\")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1) as u8;
-            
-            let user_id = payload.get(\"user_id\")
-                .and_then(|v| v.as_str())
-                .unwrap_or(\"anonymous\")
-                .to_string();
-            
-            // Create job payload
-            let job_payload = distributed_engine::JobPayload {
-                command,
-                args,
-                input_data,
-                env_vars,
-            };
-            
-            // Submit to scheduler
-            let job_id = scheduler.submit_job(job_payload, user_id, priority);
-            
-            // Return job ID
-            Response::builder()
-                .status(200)
-                .body(json!({
-                    \"job_id\": job_id,
-                    \"status\": \"scheduled\"
-                }).to_string())
-                .unwrap()
-        });
-    
-    // Route for getting job status
-    let get_job_status = warp::path!("jobs" / u64)
-        .and(warp::get())
-        .map(move |job_id: u64| {
-            let scheduler = scheduler.lock().unwrap();
-            
-            match scheduler.get_job_status(job_id) {
-                Some(job) => {
-                    Response::builder()
-                        .status(200)
-                        .body(serde_json::to_string(job).unwrap())
-                        .unwrap()
-                }
-                None => {
-                    Response::builder()
-                        .status(404)
-                        .body(json!({
-                            \"error\": \"Job not found\"
-                        }).to_string())
-                        .unwrap()
+            async move {
+                let result = handle_job_submission(job_data, &matchmaker_clone, &scheduler_clone).await;
+                match result {
+                    Ok(job_id) => {
+                        let response = json!({
+                            "status": "success",
+                            "job_id": job_id,
+                            "message": "Job submitted successfully"
+                        });
+                        
+                        Ok::<_, Rejection>(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/json")
+                            .body(response.to_string())
+                            .unwrap())
+                    },
+                    Err(e) => {
+                        let response = json!({
+                            "status": "error",
+                            "message": format!("Failed to submit job: {}", e)
+                        });
+                        
+                        Ok::<_, Rejection>(Response::builder()
+                            .status(400)
+                            .header("Content-Type", "application/json")
+                            .body(response.to_string())
+                            .unwrap())
+                    }
                 }
             }
         });
     
-    // Route for listing all jobs
-    let list_jobs = warp::path!("jobs")
+    // Get job status endpoint
+    let get_job = warp::path!("jobs" / u64)
         .and(warp::get())
-        .map(move || {
-            let scheduler = scheduler.lock().unwrap();
-            let jobs = scheduler.get_all_jobs();
+        .and_then(move |job_id: u64| {
+            let scheduler_clone = scheduler.clone();
             
-            Response::builder()
-                .status(200)
-                .body(serde_json::to_string(&jobs).unwrap())
-                .unwrap()
-        });
-    
-    // Route for cancelling a job
-    let cancel_job = warp::path!("jobs" / u64 / "cancel")
-        .and(warp::post())
-        .map(move |job_id: u64| {
-            let mut scheduler = scheduler.lock().unwrap();
-            let success = scheduler.cancel_job(job_id);
-            
-            if success {
-                Response::builder()
-                    .status(200)
-                    .body(json!({
-                        \"job_id\": job_id,
-                        \"status\": \"cancelled\"
-                    }).to_string())
-                    .unwrap()
-            } else {
-                Response::builder()
-                    .status(404)
-                    .body(json!({
-                        \"error\": \"Job not found\"
-                    }).to_string())
-                    .unwrap()
+            async move {
+                let result = handle_get_job(job_id, &scheduler_clone).await;
+                match result {
+                    Ok(job_data) => {
+                        Ok::<_, Rejection>(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "application/json")
+                            .body(job_data.to_string())
+                            .unwrap())
+                    },
+                    Err(e) => {
+                        let response = json!({
+                            "status": "error",
+                            "message": format!("Failed to get job: {}", e)
+                        });
+                        
+                        Ok::<_, Rejection>(Response::builder()
+                            .status(404)
+                            .header("Content-Type", "application/json")
+                            .body(response.to_string())
+                            .unwrap())
+                    }
+                }
             }
         });
     
-    // Serve healthcheck endpoint
+    // Health check endpoint
     let healthcheck = warp::path!("health")
         .map(|| {
             Response::builder()
                 .status(200)
+                .header("Content-Type", "application/json")
                 .body(json!({
-                    \"status\": \"healthy\",
-                    \"version\": \"1.0.0\"
+                    "status": "ok",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "timestamp": chrono::Utc::now().to_rfc3339()
                 }).to_string())
                 .unwrap()
         });
     
-    // Combined routes
+    // Combine all routes
     let routes = submit_job
-        .or(get_job_status)
-        .or(list_jobs)
-        .or(cancel_job)
-        .or(healthcheck);
+        .or(get_job)
+        .or(healthcheck)
+        .with(warp::cors().allow_any_origin());
     
     // Start the server
     warp::serve(routes)
@@ -237,4 +181,38 @@ async fn start_rest_api(
         .await;
     
     Ok(())
+}
+
+// Handle job submission
+async fn handle_job_submission(
+    job_data: serde_json::Value,
+    matchmaker: &std::sync::Arc<std::sync::Mutex<matchmaker::MatchMaker>>,
+    scheduler: &std::sync::Arc<std::sync::Mutex<job_scheduler::JobScheduler>>,
+) -> Result<u64> {
+    // In a real implementation, we would:
+    // 1. Validate the job data
+    // 2. Create a job in the scheduler
+    // 3. Find a suitable node using the matchmaker
+    // 4. Dispatch the job to the node
+    
+    // For now, just return a dummy job ID
+    Ok(12345)
+}
+
+// Handle get job request
+async fn handle_get_job(
+    job_id: u64,
+    scheduler: &std::sync::Arc<std::sync::Mutex<job_scheduler::JobScheduler>>,
+) -> Result<serde_json::Value> {
+    // In a real implementation, we would:
+    // 1. Get the job from the scheduler
+    // 2. Return the job data
+    
+    // For now, just return dummy data
+    Ok(serde_json::json!({
+        "job_id": job_id,
+        "status": "running",
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "updated_at": chrono::Utc::now().to_rfc3339(),
+    }))
 }

@@ -127,8 +127,8 @@ impl JobScheduler {
             match status {
                 "completed" => {
                     // Check if all chunks are completed
-                    job.completed_chunks += 1;
-                    if job.completed_chunks >= job.total_chunks {
+                    job.chunks_completed += 1;
+                    if job.chunks_completed >= job.chunks_total {
                         job.status = "completed".to_string();
                     }
                 },

@@ -107,7 +107,7 @@ impl JobSplitter for DefaultJobSplitter {
                     parent_job_id: job_id,
                     payload: chunk_payload,
                     dependencies: Vec::new(),
-                    estimated_work_units: (end - start) as u32,
+                    estimated_work_units: (end - start) as u64,
                 };
                 
                 chunks.push(chunk);

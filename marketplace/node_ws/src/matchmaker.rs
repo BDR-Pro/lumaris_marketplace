@@ -61,6 +61,7 @@ pub struct MatchMaker {
     nodes: HashMap<String, NodeCapabilities>,
     job_queue: VecDeque<Job>,
     running_jobs: HashMap<u64, Job>,
+    assigned_jobs: HashMap<u64, Job>,
     next_job_id: u64,
     tx: broadcast::Sender<MatchmakerMessage>,
 }
@@ -71,6 +72,7 @@ impl MatchMaker {
             nodes: HashMap::new(),
             job_queue: VecDeque::new(),
             running_jobs: HashMap::new(),
+            assigned_jobs: HashMap::new(),
             next_job_id: 1,
             tx,
         }
@@ -118,7 +120,7 @@ impl MatchMaker {
             return;
         }
         
-        println!("\ud83d\udd04 Running matching algorithm. Jobs in queue: {}", self.job_queue.len());
+        println!("🔄 Running matching algorithm. Jobs in queue: {}", self.job_queue.len());
         
         // Sort nodes by available capacity and reliability
         let mut available_nodes: Vec<NodeCapabilities> = self.nodes.values()
@@ -139,7 +141,7 @@ impl MatchMaker {
             // Find a suitable node
             if let Some(best_node_index) = self.find_best_node(job, &available_nodes) {
                 let best_node = &available_nodes[best_node_index];
-                println!("\u2705 Matched Job {} to Node {}", job.id, best_node.node_id);
+                println!("✅ Matched Job {} to Node {}", job.id, best_node.node_id);
                 
                 // Mark this job for assignment
                 matched_indices.push((job_index, best_node.node_id.clone()));
@@ -162,15 +164,15 @@ impl MatchMaker {
         // Now actually assign the matched jobs
         for (job_index, node_id) in matched_indices.iter().rev() {
             if let Some(mut job) = self.job_queue.remove(*job_index) {
-                job.status = JobStatus::Assigned;
-                job.assigned_node = Some(node_id.clone());
+                job.status = "assigned".to_string();
+                
+                // Dispatch job to node
+                println!("📤 Dispatching Job {} to Node {}", job.id, node_id);
                 
                 // In a full implementation, you would send the job to the node here
-                println!("\ud83d\udce4 Dispatching Job {} to Node {}", job.id, node_id);
                 
-                // Update job status and move to running jobs map
-                let _ = self.tx.send(MatchmakerMessage::JobStatusUpdate(job.id, job.status.clone()));
-                self.running_jobs.insert(job.id, job);
+                // Store the job in the assigned jobs map
+                self.assigned_jobs.insert(job.id, job);
             }
         }
     }

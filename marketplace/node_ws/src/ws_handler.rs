@@ -312,3 +312,23 @@ async fn handle_job_status_update(
     
     Ok(())
 }
+
+// Create a WebSocket handler for the matchmaker
+pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+    // Create a channel for broadcasting messages
+    let (tx, rx) = tokio::sync::broadcast::channel::<String>(100);
+    
+    // Store the sender in the matchmaker
+    {
+        let mut mm = matchmaker.lock().unwrap();
+        mm.tx = tx;
+    }
+    
+    // Create the WebSocket handler
+    warp::path("ws")
+        .and(warp::ws())
+        .and(warp::any().map(move || (Arc::clone(&matchmaker), rx.clone())))
+        .map(|ws: warp::ws::Ws, (matchmaker, rx)| {
+            ws.on_upgrade(move |socket| handle_websocket(socket, matchmaker, rx))
+        })
+}

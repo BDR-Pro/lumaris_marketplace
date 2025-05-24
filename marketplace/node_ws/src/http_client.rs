@@ -138,14 +138,13 @@ pub async fn update_job_status(
             .send(status_json)
         {
             Ok(response) => {
-                match response.into_string() {
-                    Ok(body) => {
-                        match serde_json::from_str::<Value>(&body) {
-                            Ok(json) => Ok(json),
-                            Err(e) => Err(NodeError::SerializationError(e))
-                        }
-                    },
-                    Err(e) => Err(NodeError::ApiError(format!("Failed to read response body: {}", e)))
+                // Read the response body as a string
+                let body = response.into_string()?;
+                
+                // Parse the string as JSON
+                match serde_json::from_str::<Value>(&body) {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(NodeError::SerializationError(e))
                 }
             },
             Err(e) => Err(NodeError::ApiError(format!("Failed to update job status: {}", e)))

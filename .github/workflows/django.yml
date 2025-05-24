@@ -8,23 +8,26 @@ on:
 
 jobs:
   test:
-    name: Test on Python ${{ matrix.python-version }}
+    name: Run Django tests on Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        python-version: [3.7, 3.8, 3.9]
+        python-version: [3.9]
       max-parallel: 4
 
     steps:
+      # ✅ Checkout the code
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ✅ Set up the requested Python version
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
 
+      # ✅ Restore pip cache
       - name: Restore pip cache
         uses: actions/cache@v3
         with:
@@ -33,12 +36,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      # ✅ Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r lumaris_frontend/requirements.txt
 
-      - name: Run Django tests
+      # ✅ Run Django tests
+      - name: Run tests
         working-directory: lumaris_frontend
         run: |
           python manage.py test

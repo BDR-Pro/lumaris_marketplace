@@ -29,7 +29,7 @@ impl StatsSender {
                 sys.refresh_all();
                 
                 // Get CPU and memory usage
-                let cpu_usage = sys.global_cpu_usage();
+                let cpu_usage = sys.global_cpu_info().cpu_usage();
                 let total_memory = sys.total_memory();
                 let used_memory = sys.used_memory();
                 let memory_usage = if total_memory > 0 {
@@ -53,7 +53,7 @@ impl StatsSender {
                 // Try to send stats via HTTP as fallback
                 let _ = ureq::post("http://127.0.0.1:8000/nodes/stats")
                     .content_type("application/json")
-                    .send_string(&json_payload.to_string());
+                    .send(json_payload.to_string());
                 
                 // Sleep for the specified interval
                 thread::sleep(Duration::from_millis(interval_ms));

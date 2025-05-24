@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Sign Up - Lumaris{% endblock %}
+
+{% block content %}
+<div class="auth-wrapper">
+    <div class="form-container glass-effect">
+        <h2 class="section-title">Create Your Lumaris Account</h2>
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+                <div class="form-group">
+                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}<div class="form-error">{{ field.errors|striptags }}</div>{% endif %}
+                </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-primary w-full">Sign Up</button>
+        </form>
+        <p class="form-footer">Already have an account? <a href="{% url 'login' %}" class="form-link">Login</a></p>
+    </div>
+</div>
+{% endblock %}

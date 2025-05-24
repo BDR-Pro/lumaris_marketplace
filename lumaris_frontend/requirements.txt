@@ -1,0 +1,7 @@
+Django==5.2.1
+requests==2.31.0
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+channels==4.0.0
+websockets==15.0.1
+python-dotenv==1.0.0

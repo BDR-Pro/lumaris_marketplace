@@ -1,0 +1,78 @@
+<!-- templates/base.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Lumaris - Distributed Compute Marketplace{% endblock %}</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    {% load static %}
+    <script>
+    window.LUMARIS_WS_URL = "{{ LUMARIS_WS_URL }}";
+    </script>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    {% block styles %}{% endblock %}
+</head>
+<body>
+    <div class="particles" id="particles"></div>
+
+   <nav class="navbar">
+    <div class="nav-container">
+        <a href="/" class="logo">
+            <i class="fas fa-cube"></i> Lumaris
+        </a>
+        <ul class="nav-links">
+            <li><a href="/">Home</a></li>
+            <li><a href="/jobs/">Jobs</a></li>
+            <li><a href="/nodes/">Nodes</a></li>
+            <li><a href="/dashboard/">Dashboard</a></li>
+            <li><a href="/login/">Login</a></li>
+        </ul>
+    </div>
+</nav>
+
+    {% block content %}{% endblock %}
+
+
+    <script src="{% static 'js/main.js' %}"></script>
+    {% block scripts %}{% endblock %}
+
+    
+</body>
+
+<footer class="footer">
+    <div class="footer-container">
+        <div class="footer-section">
+            <h3>Lumaris</h3>
+            <p>Democratizing access to computational power through decentralized marketplace technology.</p>
+        </div>
+        <div class="footer-section">
+            <h3>Platform</h3>
+            <a href="/jobs/">Browse Jobs</a>
+            <a href="/nodes/">View Nodes</a>
+            <a href="/dashboard/">Dashboard</a>
+            <a href="/jobs/submit/">Submit Job</a>
+        </div>
+        <div class="footer-section">
+            <h3>Resources</h3>
+            <a href="/docs/">Documentation</a>
+            <a href="/api/">API Reference</a>
+            <a href="/support/">Support</a>
+            <a href="/blog/">Blog</a>
+        </div>
+        <div class="footer-section">
+            <h3>Connect</h3>
+            <a href="https://github.com/bdr-pro/lumaris_marketplace" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+            <a href="#"><i class="fab fa-twitter"></i> Twitter</a>
+            <a href="#"><i class="fab fa-discord"></i> Discord</a>
+            <a href="#"><i class="fab fa-telegram"></i> Telegram</a>
+        </div>
+    </div>
+    <div class="footer-bottom">
+        <p>&copy; 2025 Lumaris. Built with passion for distributed computing.</p>
+    </div>
+</footer>
+</html>
+
+
+

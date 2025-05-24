@@ -6,7 +6,9 @@
 Cargo.lock              # Often ignored for libraries
 # Rust build artifacts
 **/target/
-
+# any file resulting from a unit test of python pytest
+# or cargo test
+.coverage
 # Optional: exclude Rust IDE files
 /.idea/
 /*.iml

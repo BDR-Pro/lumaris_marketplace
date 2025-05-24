@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Welcome to Lumaris{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <div class="hero-content">
+        <h1>Lumaris</h1>
+        <p>The future of distributed computing. Buy and sell computational power in a decentralized marketplace.</p>
+        <a href="/dashboard/" class="cta-button">
+            <i class="fas fa-rocket"></i> Get Started
+        </a>
+    </div>
+
+    <div class="digital-tree">
+        <div class="tree-container">
+            <div class="tree-node" style="top: 20%; left: 50%">CPU</div>
+            <div class="tree-node" style="top: 40%; left: 30%">8GB</div>
+            <div class="tree-node" style="top: 40%; left: 70%">16GB</div>
+            <div class="tree-node" style="top: 60%; left: 20%">Node1</div>
+            <div class="tree-node" style="top: 60%; left: 50%">Node2</div>
+            <div class="tree-node" style="top: 60%; left: 80%">Node3</div>
+            <div class="tree-node" style="top: 80%; left: 10%">GPU</div>
+            <div class="tree-node" style="top: 80%; left: 40%">VM</div>
+            <div class="tree-node" style="top: 80%; left: 70%">AI</div>
+            <div class="tree-connection" style="top: 35%; left: 45%; width: 10%; transform: rotate(30deg)"></div>
+            <div class="tree-connection" style="top: 35%; left: 55%; width: 10%; transform: rotate(-30deg)"></div>
+            <div class="tree-connection" style="top: 55%; left: 25%; width: 20%; transform: rotate(45deg)"></div>
+            <div class="tree-connection" style="top: 55%; left: 55%; width: 20%; transform: rotate(-45deg)"></div>
+        </div>
+    </div>
+</section>
+
+<section class="stats-section">
+    <div class="stats-container">
+        <div class="stat-card">
+            <div class="stat-number" id="activeNodes">{{ total_nodes|default:0 }}</div>
+            <div class="stat-label">Active Nodes</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="totalJobs">{{ total_jobs|default:0 }}</div>
+            <div class="stat-label">Total Jobs</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="completedJobs">{{ completed_jobs|default:0 }}</div>
+            <div class="stat-label">Completed Jobs</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number">99.9%</div>
+            <div class="stat-label">Uptime</div>
+        </div>
+    </div>
+</section>
+
+<section class="features-section">
+    <div class="features-container">
+        <h2 class="section-title">Revolutionary Features</h2>
+        <div class="features-grid">
+           {% for feature in features %}
+
+            <div class="feature-card">
+                <div class="feature-icon"><i class="{{ feature.0 }}"></i></div>
+                <h3 class="feature-title">{{ feature.1 }}</h3>
+                <p class="feature-description">{{ feature.2 }}</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</section>
+{% endblock %}

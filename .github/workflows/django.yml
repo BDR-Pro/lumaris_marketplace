@@ -46,4 +46,4 @@ jobs:
       - name: Run tests
         working-directory: lumaris_frontend
         run: |
-          python manage.py test
+          python -m pytest -v .\marketplace\tests\test_jobs.py

@@ -1,98 +1,109 @@
-use serde::Serialize;
-use reqwest::Client;
+// File: marketplace/node_ws/src/http_client.rs
 
-const API_BASE: &str = "http://localhost:8000/matchmaking"; // change if deployed
-const JWT_TOKEN: &str = "super-secret"; // match your Python backend
+use crate::error::{Result, NodeError};
+use log::{info, error, debug};
+use serde_json::json;
 
-#[derive(Serialize)]
-struct NodeAvailabilityUpdate {
-    node_id: String,
-    cpu_available: f64,
-    mem_available: u32,
-    status: String,
-}
+const ADMIN_API_URL: &str = "http://127.0.0.1:8000";
 
-#[derive(Serialize)]
-struct JobAssignment {
-    job_id: String,
-    node_id: String,
-}
-
-#[derive(Serialize)]
-struct JobStatusUpdate {
-    job_id: String,
-    status: String,
-    progress: Option<f32>,
-    cpu_time_sec: Option<u32>,
-    peak_memory_mb: Option<u32>,
-}
-
+/// Update node availability in the admin API
 pub async fn update_node_availability(
     node_id: &str,
-    cpu: f64,
-    mem: u32,
-    status: &str,
-) -> Result<(), reqwest::Error> {
-    let payload = NodeAvailabilityUpdate {
-        node_id: node_id.to_string(),
-        cpu_available: cpu,
-        mem_available: mem,
-        status: status.to_string(),
-    };
-
-    let client = Client::new();
-    let res = client
-        .post(&format!("{}/node/update_availability", API_BASE))
-        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
-        .json(&payload)
-        .send()
-        .await?;
-
-    println!("Update node response: {:?}", res.status());
-    Ok(())
+    cpu_available: f64,
+    mem_available: u32,
+    status: &str
+) -> Result<()> {
+    let url = format!("{}/nodes/update", ADMIN_API_URL);
+    
+    debug!("Updating node availability for {}: CPU={}, MEM={}, status={}", 
+        node_id, cpu_available, mem_available, status);
+    
+    // Create the payload
+    let payload = json!({
+        "node_id": node_id,
+        "cpu_available": cpu_available,
+        "mem_available": mem_available,
+        "status": status,
+        "timestamp": chrono::Utc::now().timestamp()
+    });
+    
+    // Send the request
+    match ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(payload)
+    {
+        Ok(_) => {
+            debug!("Successfully updated node availability for {}", node_id);
+            Ok(())
+        },
+        Err(e) => {
+            error!("Failed to update node availability: {}", e);
+            Err(NodeError::HttpClientError(format!("Failed to update node availability: {}", e)))
+        }
+    }
 }
 
-pub async fn assign_job(job_id: &str, node_id: &str) -> Result<(), reqwest::Error> {
-    let payload = JobAssignment {
-        job_id: job_id.to_string(),
-        node_id: node_id.to_string(),
-    };
-
-    let client = Client::new();
-    let res = client
-        .post(&format!("{}/job/assign", API_BASE))
-        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
-        .json(&payload)
-        .send()
-        .await?;
-
-    println!("Assign job response: {:?}", res.status());
-    Ok(())
+/// Get job details from the admin API
+pub async fn get_job_details(job_id: u64) -> Result<serde_json::Value> {
+    let url = format!("{}/jobs/{}", ADMIN_API_URL, job_id);
+    
+    debug!("Getting job details for job ID: {}", job_id);
+    
+    // Send the request
+    match ureq::get(&url).call() {
+        Ok(response) => {
+            let json: serde_json::Value = response.into_json()
+                .map_err(|e| NodeError::SerializationError(e))?;
+            
+            debug!("Successfully retrieved job details for job ID: {}", job_id);
+            Ok(json)
+        },
+        Err(e) => {
+            error!("Failed to get job details: {}", e);
+            Err(NodeError::HttpClientError(format!("Failed to get job details: {}", e)))
+        }
+    }
 }
 
+/// Update job status in the admin API
 pub async fn update_job_status(
-    job_id: &str,
+    job_id: u64,
     status: &str,
-    progress: Option<f32>,
-    cpu_time: Option<u32>,
-    mem_peak: Option<u32>,
-) -> Result<(), reqwest::Error> {
-    let payload = JobStatusUpdate {
-        job_id: job_id.to_string(),
-        status: status.to_string(),
-        progress,
-        cpu_time_sec: cpu_time,
-        peak_memory_mb: mem_peak,
-    };
-
-    let client = Client::new();
-    let res = client
-        .post(&format!("{}/job/status", API_BASE))
-        .header("Authorization", format!("Bearer {}", JWT_TOKEN))
-        .json(&payload)
-        .send()
-        .await?;
-
-    println!("Job status update: {:?}", res.status());
-    Ok(())
+    output: Option<&str>,
+    error: Option<&str>
+) -> Result<()> {
+    let url = format!("{}/jobs/{}/update", ADMIN_API_URL, job_id);
+    
+    debug!("Updating job status for job ID {}: status={}", job_id, status);
+    
+    // Create the payload
+    let mut payload = json!({
+        "status": status,
+        "timestamp": chrono::Utc::now().timestamp()
+    });
+    
+    // Add output and error if provided
+    if let Some(output_str) = output {
+        payload["output"] = json!(output_str);
+    }
+    
+    if let Some(error_str) = error {
+        payload["error"] = json!(error_str);
+    }
+    
+    // Send the request
+    match ureq::post(&url)
+        .set("Content-Type", "application/json")
+        .send_json(payload)
+    {
+        Ok(_) => {
+            debug!("Successfully updated job status for job ID: {}", job_id);
+            Ok(())
+        },
+        Err(e) => {
+            error!("Failed to update job status: {}", e);
+            Err(NodeError::HttpClientError(format!("Failed to update job status: {}", e)))
+        }
+    }
 }
+

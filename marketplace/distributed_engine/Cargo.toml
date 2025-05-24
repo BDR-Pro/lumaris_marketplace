@@ -1,0 +1,12 @@
+[package]
+name = "distributed_engine"
+version = "0.1.0"
+edition = "2021"
+description = "Distributed job execution engine for Lumaris Marketplace"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+

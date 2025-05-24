@@ -45,6 +45,8 @@ jobs:
       # ✅ Run Django tests
       - name: Run tests
         working-directory: lumaris_frontend
+        env:
+          DJANGO_SETTINGS_MODULE: lumaris_frontend.settings
         run: |
           python -m pytest -v marketplace/tests/test_jobs.py
 

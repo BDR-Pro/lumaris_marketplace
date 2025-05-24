@@ -118,11 +118,12 @@ impl MatchMaker {
             return;
         }
         
-        println!("🔄 Running matching algorithm. Jobs in queue: {}", self.job_queue.len());
+        println!("\ud83d\udd04 Running matching algorithm. Jobs in queue: {}", self.job_queue.len());
         
         // Sort nodes by available capacity and reliability
-        let mut available_nodes: Vec<&NodeCapabilities> = self.nodes.values()
+        let mut available_nodes: Vec<NodeCapabilities> = self.nodes.values()
             .filter(|n| n.available)
+            .cloned()
             .collect();
         
         available_nodes.sort_by(|a, b| {
@@ -136,25 +137,24 @@ impl MatchMaker {
         
         for (job_index, job) in self.job_queue.iter().enumerate() {
             // Find a suitable node
-            if let Some(best_node) = self.find_best_node(job, &available_nodes) {
-                println!("✅ Matched Job {} to Node {}", job.id, best_node.node_id);
+            if let Some(best_node_index) = self.find_best_node(job, &available_nodes) {
+                let best_node = &available_nodes[best_node_index];
+                println!("\u2705 Matched Job {} to Node {}", job.id, best_node.node_id);
                 
                 // Mark this job for assignment
                 matched_indices.push((job_index, best_node.node_id.clone()));
                 
                 // Update our working copy of available nodes
-                if let Some(node_index) = available_nodes.iter().position(|n| n.node_id == best_node.node_id) {
-                    let mut updated_caps = best_node.clone();
-                    updated_caps.cpu_cores -= job.requirements.cpu_cores;
-                    updated_caps.memory_mb -= job.requirements.memory_mb;
-                    
-                    // If node is now at capacity, remove it from available pool
-                    if updated_caps.cpu_cores < 0.5 || updated_caps.memory_mb < 512 {
-                        available_nodes.remove(node_index);
-                    } else {
-                        // Otherwise update its capacity
-                        available_nodes[node_index] = &updated_caps;
-                    }
+                let mut updated_caps = available_nodes[best_node_index].clone();
+                updated_caps.cpu_cores -= job.requirements.cpu_cores;
+                updated_caps.memory_mb -= job.requirements.memory_mb;
+                
+                // If node is now at capacity, remove it from available pool
+                if updated_caps.cpu_cores < 0.5 || updated_caps.memory_mb < 512 {
+                    available_nodes.remove(best_node_index);
+                } else {
+                    // Otherwise update its capacity
+                    available_nodes[best_node_index] = updated_caps;
                 }
             }
         }
@@ -166,7 +166,7 @@ impl MatchMaker {
                 job.assigned_node = Some(node_id.clone());
                 
                 // In a full implementation, you would send the job to the node here
-                println!("📤 Dispatching Job {} to Node {}", job.id, node_id);
+                println!("\ud83d\udce4 Dispatching Job {} to Node {}", job.id, node_id);
                 
                 // Update job status and move to running jobs map
                 let _ = self.tx.send(MatchmakerMessage::JobStatusUpdate(job.id, job.status.clone()));
@@ -176,20 +176,21 @@ impl MatchMaker {
     }
     
     // Find the best node for a job based on requirements and scoring
-    fn find_best_node<'a>(&self, job: &Job, available_nodes: &[&'a NodeCapabilities]) -> Option<&'a NodeCapabilities> {
+    fn find_best_node(&self, job: &Job, available_nodes: &[NodeCapabilities]) -> Option<usize> {
         available_nodes.iter()
-            .filter(|node| {
+            .enumerate()
+            .filter(|(_, node)| {
                 // Basic filtering: enough CPU and memory
                 node.cpu_cores >= job.requirements.cpu_cores &&
                 node.memory_mb >= job.requirements.memory_mb
             })
-            .max_by(|a, b| {
+            .max_by(|(_, a), (_, b)| {
                 // Scoring: balance between utilization and reliability
                 let a_score = a.reliability_score * (a.cpu_cores / job.requirements.cpu_cores);
                 let b_score = b.reliability_score * (b.cpu_cores / job.requirements.cpu_cores);
                 a_score.partial_cmp(&b_score).unwrap()
             })
-            .copied()
+            .map(|(index, _)| index)
     }
     
     // Handle node failure: requeue jobs that were assigned to the failed node

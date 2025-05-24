@@ -63,11 +63,11 @@ pub struct MatchMaker {
     running_jobs: HashMap<u64, Job>,
     assigned_jobs: HashMap<u64, Job>,
     next_job_id: u64,
-    tx: broadcast::Sender<MatchmakerMessage>,
+    tx: broadcast::Sender<String>,
 }
 
 impl MatchMaker {
-    pub fn new(tx: broadcast::Sender<MatchmakerMessage>) -> Self {
+    pub fn new(tx: broadcast::Sender<String>) -> Self {
         Self {
             nodes: HashMap::new(),
             job_queue: VecDeque::new(),
@@ -164,12 +164,15 @@ impl MatchMaker {
         // Now actually assign the matched jobs
         for (job_index, node_id) in matched_indices.iter().rev() {
             if let Some(mut job) = self.job_queue.remove(*job_index) {
-                job.status = "assigned".to_string();
+                job.status = JobStatus::Assigned;
                 
                 // Dispatch job to node
                 println!("📤 Dispatching Job {} to Node {}", job.id, node_id);
                 
                 // In a full implementation, you would send the job to the node here
+                
+                // Update job status
+                job.status = JobStatus::Assigned;
                 
                 // Store the job in the assigned jobs map
                 self.assigned_jobs.insert(job.id, job);
@@ -247,6 +250,11 @@ impl MatchMaker {
     
     pub fn get_node_by_id_mut(&mut self, node_id: &str) -> Option<&mut NodeCapabilities> {
         self.nodes.get_mut(node_id)
+    }
+    
+    // Add a setter for tx
+    pub fn set_tx(&mut self, tx: broadcast::Sender<String>) {
+        self.tx = tx;
     }
 }
 

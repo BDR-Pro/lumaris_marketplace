@@ -5,3 +5,4 @@ django-cors-headers==4.3.1
 channels==4.0.0
 websockets==15.0.1
 python-dotenv==1.0.0
+pytest

@@ -1,108 +1,89 @@
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use serde_json::json;
+use sysinfo::System;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 use url::Url;
-use serde::{Serialize, Deserialize};
-use tungstenite::connect;
-use ureq;
-use hostname;
-use sysinfo::{System, SystemExt};
-use winapi::um::processthreadsapi::GetSystemTimes;
-use winapi::shared::minwindef::FILETIME;
 
-#[derive(Serialize, Deserialize, Default, Debug, Clone)]
-pub struct Stats {
-    pub node_id: String,
-    pub cpu: f32,
-    pub mem: f32,
-    pub funds: f32,
+pub struct StatsSender {
+    ws_url: String,
+    node_id: String,
+    interval: Duration,
 }
 
-
-fn get_cpu_usage() -> f32 {
-    unsafe {
-        let mut idle_time = FILETIME::default();
-        let mut kernel_time = FILETIME::default();
-        let mut user_time = FILETIME::default();
-
-        if GetSystemTimes(&mut idle_time, &mut kernel_time, &mut user_time) != 0 {
-            let idle1 = filetime_to_u64(&idle_time);
-            let kernel1 = filetime_to_u64(&kernel_time);
-            let user1 = filetime_to_u64(&user_time);
-
-            std::thread::sleep(std::time::Duration::from_secs(1));
-
-            let mut idle_time2 = FILETIME::default();
-            let mut kernel_time2 = FILETIME::default();
-            let mut user_time2 = FILETIME::default();
-
-            GetSystemTimes(&mut idle_time2, &mut kernel_time2, &mut user_time2);
-
-            let idle2 = filetime_to_u64(&idle_time2);
-            let kernel2 = filetime_to_u64(&kernel_time2);
-            let user2 = filetime_to_u64(&user_time2);
-
-            let idle_diff = idle2 - idle1;
-            let total_diff = (kernel2 - kernel1) + (user2 - user1);
-
-            if total_diff == 0 {
-                0.0
-            } else {
-                100.0 - (idle_diff as f64 * 100.0 / total_diff as f64) as f32
-            }
-        } else {
-            0.0
+impl StatsSender {
+    pub fn new(ws_url: &str, node_id: &str, interval_ms: u64) -> Self {
+        Self {
+            ws_url: ws_url.to_string(),
+            node_id: node_id.to_string(),
+            interval: Duration::from_millis(interval_ms),
         }
     }
-}
-
-fn filetime_to_u64(ft: &FILETIME) -> u64 {
-    ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64
-}
-
-
-pub fn spawn_stats_sender(stats: Arc<Mutex<Stats>>) {
-    thread::spawn({
-        let stats_clone = Arc::clone(&stats);
-        move || {
-            let url = Url::parse("ws://127.0.0.1:9001").unwrap();
-
-            if let Ok((mut socket, _)) = connect(url) {
-                let mut sys = System::new_all();
-
-                loop {
-                    sys.refresh_cpu();
-                    sys.refresh_memory();
-                    std::thread::sleep(Duration::from_secs(1));
-
-                    let cpu = get_cpu_usage();
-                    let mem = sys.used_memory() as f32 / sys.total_memory() as f32 * 100.0;
-                    let node_id = hostname::get().unwrap().to_string_lossy().to_string();
-
-                    // 🚀 Only lock when writing!
-                    {
-                        let mut stats_lock = stats_clone.lock().unwrap();
-                        stats_lock.cpu = cpu;
-                        stats_lock.mem = mem;
-                        stats_lock.node_id = node_id.clone();
-                    }
-
-                    let json = {
-                        let stats_snapshot = stats_clone.lock().unwrap().clone();
-                        serde_json::to_string(&stats_snapshot).unwrap()
-                    };
-
-                    println!("✅ Sending stats: {}", json);
-                    let _ = socket.send(tungstenite::Message::Text(json.clone()));
-                    let _ = ureq::post("http://127.0.0.1:8000/nodes/update")
-                        .set("Content-Type", "application/json")
-                        .send_string(&json);
-
-                    std::thread::sleep(Duration::from_secs(45));
+    
+    pub fn start(&self) {
+        let ws_url = self.ws_url.clone();
+        let node_id = self.node_id.clone();
+        let interval = self.interval;
+        
+        thread::spawn(move || {
+            // Initialize system info collector
+            let mut sys = System::new_all();
+            
+            loop {
+                // Try to connect to WebSocket server
+                if let Ok(url) = Url::parse(&ws_url) {
+                    // Use tokio runtime for async WebSocket
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    
+                    rt.block_on(async {
+                        match connect_async(url).await {
+                            Ok((mut ws_stream, _)) => {
+                                // Refresh system information
+                                sys.refresh_all();
+                                
+                                // Get CPU usage
+                                let cpu_usage = sys.global_cpu_info().cpu_usage();
+                                
+                                // Get memory usage
+                                let used_memory = sys.used_memory();
+                                let total_memory = sys.total_memory();
+                                
+                                // Get hostname
+                                let hostname = hostname::get()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                
+                                // Create stats message
+                                let json = json!({
+                                    "type": "node_stats",
+                                    "node_id": node_id,
+                                    "hostname": hostname,
+                                    "cpu_usage": cpu_usage,
+                                    "memory_used": used_memory,
+                                    "memory_total": total_memory,
+                                    "timestamp": chrono::Utc::now().timestamp()
+                                }).to_string();
+                                
+                                // Send stats via WebSocket
+                                let _ = ws_stream.send(Message::Text(json.into())).await;
+                                
+                                // Also send via HTTP as fallback
+                                let _ = ureq::post("http://127.0.0.1:8000/nodes/stats")
+                                    .content_type("application/json")
+                                    .send_string(&json);
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to connect to WebSocket server: {}", e);
+                            }
+                        }
+                    });
                 }
-            } else {
-                eprintln!("❌ Failed to connect to WebSocket server.");
+                
+                // Wait for next update
+                thread::sleep(interval);
             }
-        }
-    });
+        });
+    }
 }

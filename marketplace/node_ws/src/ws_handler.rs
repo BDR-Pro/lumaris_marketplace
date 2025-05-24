@@ -100,7 +100,7 @@ async fn handle_websocket_connection(
         "type": "welcome",
         "message": "Connected to Lumaris Marketplace Node WebSocket",
         "timestamp": Utc::now().timestamp()
-    }).to_string());
+    }).to_string().into());
     
     ws_sender.send(welcome_msg).await?;
     
@@ -148,8 +148,9 @@ async fn handle_websocket_connection(
                 info!("Marked node {} as unavailable", peer_id);
                 
                 // Update availability in the API
+                let peer_id_clone = peer_id.to_string();
                 tokio::spawn(async move {
-                    if let Err(e) = update_node_availability("http://localhost:8000", &peer_id, false).await {
+                    if let Err(e) = update_node_availability("http://localhost:8000", &peer_id_clone, false).await {
                         error!("Failed to update node availability: {:?}", e);
                     }
                 });
@@ -213,8 +214,9 @@ async fn process_message(
             }
             
             // Update node availability in the API
+            let peer_id_clone = peer_id.to_string();
             tokio::spawn(async move {
-                if let Err(e) = update_node_availability("http://localhost:8000", peer_id, true).await {
+                if let Err(e) = update_node_availability("http://localhost:8000", &peer_id_clone, true).await {
                     error!("Failed to update node availability: {:?}", e);
                 }
             });
@@ -300,7 +302,7 @@ async fn handle_job_status_update(
         "status": status_str
     }).to_string();
     
-    let ws_msg = Message::Text(update_msg);
+    let ws_msg = Message::Text(update_msg.into());
     
     // Broadcast to all connected clients
     let connections = connections.lock().await;

@@ -22,7 +22,8 @@ use crate::matchmaker::{
 type ConnectionId = String;
 type NodeConnections = Arc<TokioMutex<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Message>>>>;
 
-pub async fn start_ws_server() -> Result<()> {
+pub async fn start_ws_server(
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:9001").await
         .map_err(|e| NodeError::IoError(e))?;
     info!("Listening on ws://127.0.0.1:9001");
@@ -57,7 +58,7 @@ pub async fn start_ws_server() -> Result<()> {
         let connections_clone = connections.clone();
         
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, peer, matchmaker_clone, connections_clone).await {
+            if let Err(e) = handle_websocket_connection(stream, peer, matchmaker_clone, connections_clone).await {
                 error!("Error processing connection: {:?}", e);
             }
         });
@@ -66,12 +67,12 @@ pub async fn start_ws_server() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(
+async fn handle_websocket_connection(
     stream: TcpStream, 
     peer_id: String,
     matchmaker: SharedMatchMaker,
     connections: NodeConnections
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
     // Accept the WebSocket connection
     let ws_stream = accept_async(stream).await?;
     info!("WebSocket connection established with: {}", peer_id);
@@ -338,15 +339,13 @@ async fn handle_job_status_update(
     };
     
     // Create the update message
-    let update_msg = json!({
-        "type": "job_update",
+    let update_msg = serde_json::json!({
+        "type": "job_status_update",
         "job_id": job_id,
-        "status": status_str,
-        "timestamp": Utc::now().timestamp()
-    });
+        "status": status
+    }).to_string();
     
-    // Convert to websocket message
-    let ws_msg = Message::Text(update_msg.to_string());
+    let ws_msg = Message::Text(update_msg.into());
     
     // Send to all connected nodes (in a real system, we'd filter by relevance)
     let connections = connections.lock().await;

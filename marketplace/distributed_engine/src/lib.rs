@@ -277,8 +277,6 @@ pub struct DistributedJobManager {
     result_aggregator: Box<dyn ResultAggregator>,
     chunks_by_job: HashMap<u64, Vec<JobChunk>>,
     results_by_job: HashMap<u64, Vec<JobResult>>,
-    job_chunks: HashMap<u64, Vec<JobChunk>>,
-    job_results: HashMap<u64, Vec<JobResult>>,
 }
 
 impl DistributedJobManager {
@@ -291,8 +289,6 @@ impl DistributedJobManager {
             result_aggregator,
             chunks_by_job: HashMap::new(),
             results_by_job: HashMap::new(),
-            job_chunks: HashMap::new(),
-            job_results: HashMap::new(),
         }
     }
     
@@ -373,6 +369,12 @@ impl DistributedJobManager {
     
     fn get_or_create_job_results(&mut self, job_id: u64) -> &mut Vec<JobResult> {
         self.job_results
+            .entry(job_id)
+            .or_default()
+    }
+    
+    fn get_job_results_mut(&mut self, job_id: u64) -> &mut Vec<JobResult> {
+        self.results_by_job
             .entry(job_id)
             .or_default()
     }

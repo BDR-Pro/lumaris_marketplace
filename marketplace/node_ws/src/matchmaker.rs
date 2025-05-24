@@ -1,4 +1,3 @@
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
@@ -235,6 +234,14 @@ impl MatchMaker {
             let _ = self.tx.send(MatchmakerMessage::JobStatusUpdate(job_id, status));
         }
     }
+    
+    pub fn get_node_by_id(&self, node_id: &str) -> Option<&Node> {
+        self.nodes.get(node_id)
+    }
+    
+    pub fn get_node_by_id_mut(&mut self, node_id: &str) -> Option<&mut Node> {
+        self.nodes.get_mut(node_id)
+    }
 }
 
 // Thread-safe matchmaker for use in async context
@@ -245,4 +252,4 @@ pub fn create_matchmaker() -> (SharedMatchMaker, broadcast::Receiver<MatchmakerM
     let (tx, rx) = broadcast::channel(100);
     let matchmaker = Arc::new(Mutex::new(MatchMaker::new(tx)));
     (matchmaker, rx)
-}zx
+}

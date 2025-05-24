@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as TokioMutex;
 use serde_json::{Value, json};
 use chrono::Utc;
-use crate::http_client::update_node_availability;
+use crate::http_client::{update_node_availability, update_job_status};
 use crate::error::{Result, NodeError};
 use log::{info, error, debug, warn};
 
@@ -18,29 +18,34 @@ use crate::matchmaker::{
     Job, JobRequirements, JobStatus, MatchmakerMessage
 };
 
-// Store active connections
-type ConnectionId = String;
-type NodeConnections = Arc<TokioMutex<HashMap<ConnectionId, tokio::sync::mpsc::Sender<Message>>>>;
+// Type aliases for clarity
+type NodeConnections = Arc<TokioMutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
+type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-pub async fn start_ws_server(
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind("127.0.0.1:9001").await
-        .map_err(|e| NodeError::IoError(e))?;
-    info!("Listening on ws://127.0.0.1:9001");
+// Main WebSocket server function
+pub async fn start_ws_server(host: &str, port: u16, matchmaker: SharedMatchMaker) -> Result<()> {
+    let addr = format!("{}:{}", host, port);
+    let listener = TcpListener::bind(&addr).await?;
     
-    // Create our matchmaker
-    let (matchmaker, mut matchmaker_rx) = create_matchmaker();
+    info!("🚀 WebSocket server listening on {}", addr);
     
     // Store active connections
-    let connections = NodeConnections::new(TokioMutex::new(HashMap::new()));
+    let connections: NodeConnections = Arc::new(TokioMutex::new(HashMap::new()));
+    
+    // Clone for event listener
+    let connections_for_events = connections.clone();
+    
+    // Listen for matchmaker events
+    let (_, mut rx) = {
+        let matchmaker_guard = matchmaker.lock().unwrap();
+        (Arc::clone(&matchmaker), rx)
+    };
     
     // Spawn a task to handle matchmaker events
-    let connections_for_events = connections.clone();
     tokio::spawn(async move {
-        while let Ok(msg) = matchmaker_rx.recv().await {
+        while let Ok(msg) = rx.recv().await {
             match msg {
                 MatchmakerMessage::JobStatusUpdate(job_id, status) => {
-                    // Broadcast job status updates to relevant nodes
                     if let Err(e) = handle_job_status_update(job_id, status, &connections_for_events).await {
                         error!("Failed to handle job status update: {:?}", e);
                     }
@@ -67,21 +72,22 @@ pub async fn start_ws_server(
     Ok(())
 }
 
+// Handle a single WebSocket connection
 async fn handle_websocket_connection(
-    stream: TcpStream, 
+    stream: TcpStream,
     peer_id: String,
     matchmaker: SharedMatchMaker,
     connections: NodeConnections
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Accept the WebSocket connection
+) -> WsResult<()> {
+    // Upgrade the TCP stream to a WebSocket connection
     let ws_stream = accept_async(stream).await?;
     info!("WebSocket connection established with: {}", peer_id);
     
-    // Split the WebSocket into sender and receiver
+    // Split the WebSocket stream into sender and receiver
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
     
-    // Create a channel for sending messages to this specific connection
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(32);
+    // Create a channel for sending messages to this client
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     
     // Store the sender in our connections map
     {
@@ -89,15 +95,24 @@ async fn handle_websocket_connection(
         connections.insert(peer_id.clone(), tx);
     }
     
+    // Send a welcome message
+    let welcome_msg = Message::Text(json!({
+        "type": "welcome",
+        "message": "Connected to Lumaris Marketplace Node WebSocket",
+        "timestamp": Utc::now().timestamp()
+    }).to_string());
+    
+    ws_sender.send(welcome_msg).await?;
+    
     // Forward messages from the channel to the WebSocket
     let mut send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             ws_sender.send(msg).await?;
         }
-        Ok::<_, Box<dyn std::error::Error + Send>>(())
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     });
     
-    // Process incoming WebSocket messages
+    // Process incoming messages
     let mut recv_task = tokio::spawn(async move {
         while let Some(result) = ws_receiver.next().await {
             match result {
@@ -108,46 +123,52 @@ async fn handle_websocket_connection(
                         }
                         Message::Close(_) => {
                             info!("Connection closed by client: {}", peer_id);
-                            // Mark node as unavailable in the matchmaker
-                            {
-                                let mut mm = matchmaker.lock().unwrap();
-                                mm.remove_node(&peer_id);
-                            }
                             break;
                         }
-                        _ => {}
+                        _ => {} // Ignore other message types
                     }
                 }
                 Err(e) => {
-                    info!("WebSocket error: {:?}", e);
+                    error!("Error receiving message from {}: {}", peer_id, e);
                     break;
                 }
             }
         }
         
-        // Clean up when connection closes
+        // Remove connection when client disconnects
+        let mut connections = connections.lock().await;
+        connections.remove(&peer_id);
+        info!("Removed connection: {}", peer_id);
+        
+        // Mark node as unavailable
         {
-            let mut connections = connections.lock().await;
-            connections.remove(&peer_id);
-            
-            // Also mark node as unavailable in matchmaker
-            let mut mm = matchmaker.lock().unwrap();
-            mm.remove_node(&peer_id);
+            let mut matchmaker = matchmaker.lock().unwrap();
+            if let Some(node) = matchmaker.get_node_by_id_mut(&peer_id) {
+                node.available = false;
+                info!("Marked node {} as unavailable", peer_id);
+                
+                // Update availability in the API
+                tokio::spawn(async move {
+                    if let Err(e) = update_node_availability("http://localhost:8000", &peer_id, false).await {
+                        error!("Failed to update node availability: {:?}", e);
+                    }
+                });
+            }
         }
         
-        Ok::<_, Box<dyn std::error::Error + Send>>(())
+        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
     });
     
     // Wait for either task to complete
     tokio::select! {
-        result = &mut send_task => {
-            if let Err(e) = result? {
-                info!("Error in send task: {:?}", e);
+        res = &mut send_task => {
+            if let Err(e) = res {
+                error!("Send task error: {:?}", e);
             }
         }
-        result = &mut recv_task => {
-            if let Err(e) = result? {
-                info!("Error in receive task: {:?}", e);
+        res = &mut recv_task => {
+            if let Err(e) = res {
+                error!("Receive task error: {:?}", e);
             }
         }
     }
@@ -155,179 +176,113 @@ async fn handle_websocket_connection(
     Ok(())
 }
 
+// Process incoming WebSocket messages
 async fn process_message(
-    text: &str,
+    message: &str,
     peer_id: &str,
     matchmaker: &SharedMatchMaker
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse the JSON message
-    let parsed: Value = serde_json::from_str(text)?;
+) -> Result<()> {
+    // Parse the message
+    let parsed: Value = serde_json::from_str(message)
+        .map_err(|e| NodeError::SerializationError(e))?;
     
-    // Extract message type if available
-    let msg_type = parsed.get("type").and_then(Value::as_str);
+    // Extract message type
+    let msg_type = parsed["type"].as_str().unwrap_or("unknown");
     
     match msg_type {
-        // Handle node stats/availability updates
-        Some("stats") | None => {
-            // For compatibility with existing code which may not specify a type
-            if let (Some(cpu), Some(mem)) = (
-                parsed.get("cpu").and_then(Value::as_f64),
-                parsed.get("mem").and_then(Value::as_f64)
-            ) {
-                let node_id = parsed.get("node_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(peer_id)
-                    .to_string();
-                
-                // Calculate available resources (simplified)
-                let cpu_available = (100.0 - cpu) / 25.0; // Rough estimate: each 25% CPU = 1 core
-                let mem_available = (100.0 - mem) * 40.96; // Rough estimate: 4GB total, convert percent to MB
-                
-                // Update the matchmaker with node capabilities
-                let capabilities = NodeCapabilities {
-                    node_id: node_id.clone(),
-                    cpu_cores: cpu_available as f32,
-                    memory_mb: mem_available as u64,
-                    available: true,
-                    reliability_score: 1.0, // Default for now
-                    last_updated: Utc::now().timestamp() as u64,
-                };
-                
-                {
-                    let mut mm = matchmaker.lock().unwrap();
-                    mm.update_node(capabilities);
+        "node_registration" => {
+            info!("Node registration from: {}", peer_id);
+            
+            // Extract node capabilities
+            let cpu_cores = parsed["capabilities"]["cpu_cores"].as_f64().unwrap_or(1.0) as f32;
+            let memory_mb = parsed["capabilities"]["memory_mb"].as_u64().unwrap_or(1024);
+            
+            let node = NodeCapabilities {
+                node_id: peer_id.to_string(),
+                cpu_cores,
+                memory_mb,
+                available: true,
+                reliability_score: 1.0, // Default for new nodes
+                last_updated: Utc::now().timestamp() as u64,
+            };
+            
+            // Register the node with the matchmaker
+            {
+                let mut matchmaker = matchmaker.lock().unwrap();
+                matchmaker.update_node(node.clone());
+            }
+            
+            // Update node availability in the API
+            tokio::spawn(async move {
+                if let Err(e) = update_node_availability("http://localhost:8000", peer_id, true).await {
+                    error!("Failed to update node availability: {:?}", e);
                 }
-                
-                info!("Updated node stats for {}: CPU={:.1}%, MEM={:.1}%", 
-                    node_id, cpu, mem);
-            }
+            });
         }
-        
-        // Handle explicit availability updates
-        Some("availability_update") => {
-            if let (Some(cpu_avail), Some(mem_avail), Some(status)) = (
-                parsed.get("cpu_available").and_then(Value::as_f64),
-                parsed.get("mem_available").and_then(Value::as_f64),
-                parsed.get("status").and_then(Value::as_str)
-            ) {
-                let node_id = parsed.get("node_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or(peer_id)
-                    .to_string();
-                
-                let capabilities = NodeCapabilities {
-                    node_id: node_id.clone(),
-                    cpu_cores: cpu_avail as f32,
-                    memory_mb: mem_avail as u64,
-                    available: status == "ready",
-                    reliability_score: parsed.get("reliability_score")
-                        .and_then(Value::as_f64)
-                        .unwrap_or(1.0) as f32,
-                    last_updated: Utc::now().timestamp() as u64,
-                };
-                
-                {
-                    let mut mm = matchmaker.lock().unwrap();
-                    mm.update_node(capabilities);
+        "node_status" => {
+            // Update node status
+            let cpu_usage = parsed["status"]["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
+            let memory_usage = parsed["status"]["memory_usage"].as_f64().unwrap_or(0.0) as f32;
+            let available = parsed["status"]["available"].as_bool().unwrap_or(true);
+            
+            {
+                let mut matchmaker = matchmaker.lock().unwrap();
+                if let Some(node) = matchmaker.get_node_by_id_mut(peer_id) {
+                    // Update node capabilities based on current usage
+                    node.available = available;
+                    node.last_updated = Utc::now().timestamp() as u64;
+                    
+                    debug!("Updated node {} status: CPU {}%, Memory {}%, Available: {}", 
+                        peer_id, cpu_usage, memory_usage, available);
                 }
-                
-                info!("Explicit availability update for {}: Status={}, CPU={:.1} cores, MEM={} MB", 
-                    node_id, status, cpu_avail, mem_avail);
-                update_node_availability(
-                    &node_id, cpu_avail, mem_avail as u32, status
-                ).await?;
-
             }
         }
-        
-        // Handle job status updates from nodes
-        Some("job_status") => {
-            if let (Some(job_id), Some(status)) = (
-                parsed.get("job_id").and_then(Value::as_u64),
-                parsed.get("status").and_then(Value::as_str)
-            ) {
-                let job_status = match status {
-                    "queued" => JobStatus::Queued,
-                    "matching" => JobStatus::Matching,
-                    "assigned" => JobStatus::Assigned,
-                    "running" => JobStatus::Running,
-                    "completed" => JobStatus::Completed,
-                    "failed" => JobStatus::Failed,
-                    _ => JobStatus::Queued,
-                };
-                
-                {
-                    let mut mm = matchmaker.lock().unwrap();
-                    mm.update_job_status(job_id, job_status);
+        "job_status" => {
+            // Update job status
+            let job_id = parsed["job_id"].as_u64().unwrap_or(0);
+            let status_str = parsed["status"].as_str().unwrap_or("unknown");
+            
+            let status = match status_str {
+                "queued" => JobStatus::Queued,
+                "matching" => JobStatus::Matching,
+                "assigned" => JobStatus::Assigned,
+                "running" => JobStatus::Running,
+                "completed" => JobStatus::Completed,
+                "failed" => JobStatus::Failed,
+                _ => JobStatus::Failed,
+            };
+            
+            // Extract result data if available
+            let result_data = parsed.get("result").cloned();
+            
+            {
+                let mut matchmaker = matchmaker.lock().unwrap();
+                matchmaker.update_job_status(job_id, status.clone());
+            }
+            
+            // Update job status in the API
+            let job_id_copy = job_id;
+            let status_str_copy = status_str.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
+                    error!("Failed to update job status: {:?}", e);
                 }
-                
-                info!("Job {} status updated to {}", job_id, status);
-            }
+            });
         }
-        
-        // Handle job submissions
-        Some("job_submit") => {
-            if let Some(requirements) = parsed.get("requirements") {
-                // Extract job requirements
-                let cpu_cores = requirements.get("cpu_cores")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(1.0) as f32;
-                
-                let memory_mb = requirements.get("memory_mb")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1024);
-                
-                let expected_duration = requirements.get("expected_duration_sec")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(3600);
-                
-                let priority = requirements.get("priority")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(1) as u8;
-                
-                // Create job requirements
-                let job_reqs = JobRequirements {
-                    job_id: 0, // Will be assigned by matchmaker
-                    cpu_cores,
-                    memory_mb,
-                    expected_duration_sec: expected_duration,
-                    priority,
-                };
-                
-                // Create the job
-                let job = Job {
-                    id: 0, // Will be assigned by matchmaker
-                    requirements: job_reqs,
-                    status: JobStatus::Queued,
-                    assigned_node: None,
-                    submitted_at: Utc::now().timestamp() as u64,
-                    started_at: None,
-                    completed_at: None,
-                };
-                
-                // Submit to matchmaker
-                let job_id = {
-                    let mut mm = matchmaker.lock().unwrap();
-                    mm.submit_job(job)
-                };
-                
-                info!("Job submitted with ID: {}", job_id);
-            }
-        }
-        
         _ => {
-            info!("Unrecognized message type: {:?}", msg_type);
+            debug!("Unknown message type: {}", msg_type);
         }
     }
     
     Ok(())
 }
 
+// Handle job status updates and broadcast to connected clients
 async fn handle_job_status_update(
     job_id: u64,
     status: JobStatus,
     connections: &NodeConnections
-) {
+) -> WsResult<()> {
     // Get status as string
     let status_str = match status {
         JobStatus::Queued => "queued",
@@ -342,45 +297,16 @@ async fn handle_job_status_update(
     let update_msg = serde_json::json!({
         "type": "job_status_update",
         "job_id": job_id,
-        "status": status
+        "status": status_str
     }).to_string();
     
-    let ws_msg = Message::Text(update_msg.into());
+    let ws_msg = Message::Text(update_msg);
     
-    // Send to all connected nodes (in a real system, we'd filter by relevance)
+    // Broadcast to all connected clients
     let connections = connections.lock().await;
     for (_, tx) in connections.iter() {
-        let _ = tx.send(ws_msg.clone()).await;
+        let _ = tx.send(ws_msg.clone());
     }
-}
-
-async fn broadcast_job_status_update(
-    job_id: u64, 
-    status: &str, 
-    connections: &NodeConnections
-) -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Get status as string
-    let status_str = match status {
-        JobStatus::Queued => "queued",
-        JobStatus::Matching => "matching",
-        JobStatus::Assigned => "assigned",
-        JobStatus::Running => "running",
-        JobStatus::Completed => "completed",
-        JobStatus::Failed => "failed",
-    };
     
-    // Create the update message
-    let update_msg = serde_json::json!({
-        "type": "job_status_update",
-        "job_id": job_id,
-        "status": status
-    }).to_string();
-    
-    let ws_msg = Message::Text(update_msg.into());
-    
-    // Send to all connected nodes (in a real system, we'd filter by relevance)
-    let connections = connections.lock().await;
-    for (_, tx) in connections.iter() {
-        let _ = tx.send(ws_msg.clone()).await;
-    }
+    Ok(())
 }

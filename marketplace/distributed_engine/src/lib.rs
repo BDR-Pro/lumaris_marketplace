@@ -59,7 +59,7 @@ pub struct JobData {
 
 // Core interfaces for the distributed engine
 
-pub trait JobSplitter {
+pub trait JobSplitter: Send + Sync {
     /// Split a job into multiple chunks that can be executed in parallel
     fn split_job(&self, job_data: &JobData) -> Vec<JobChunk>;
     
@@ -67,7 +67,7 @@ pub trait JobSplitter {
     fn calculate_dependencies(&self, chunks: &mut Vec<JobChunk>);
 }
 
-pub trait ResultAggregator {
+pub trait ResultAggregator: Send + Sync {
     /// Combine results from multiple chunks into a final job result
     fn aggregate_results(&self, results: Vec<JobResult>) -> JobResult;
     
@@ -75,7 +75,7 @@ pub trait ResultAggregator {
     fn is_job_complete(&self, job_id: u64, received_chunks: &[u64]) -> bool;
 }
 
-pub trait JobProcessor {
+pub trait JobProcessor: Send + Sync {
     /// Process a job chunk and return a result
     fn process_chunk(&self, job_id: u64, chunk: &JobChunk) -> String;
 }
@@ -529,4 +529,3 @@ pub fn estimate_chunk_size(data_size: usize, available_nodes: usize) -> usize {
     // Ensure chunk size is at least 100 records for efficiency
     std::cmp::max(chunk_size, 100)
 }
-

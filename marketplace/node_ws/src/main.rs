@@ -70,7 +70,7 @@ async fn main() {
     let ws_port = config.node_ws.port;
     
     info!("🔄 Starting WebSocket Server on {}:{} (WS)...", ws_host, ws_port);
-    if let Err(e) = start_ws_server().await {
+    if let Err(e) = start_ws_server(&ws_host, ws_port, matchmaker.clone()).await {
         error!("WebSocket server error: {}", e);
     }
 }

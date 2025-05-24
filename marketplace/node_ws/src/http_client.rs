@@ -23,11 +23,12 @@ pub async fn update_node_status(
     debug!("Updating node status: {}", payload);
     
     let url = url.clone();
+    let payload_str = payload.to_string();
     
     // Send the request
     match ureq::post(&url)
         .content_type("application/json")
-        .send_json(payload)
+        .send(payload_str)
     {
         Ok(_) => {
             debug!("Node status updated successfully");
@@ -36,6 +37,37 @@ pub async fn update_node_status(
         Err(e) => {
             error!("Failed to update node status: {}", e);
             Err(NodeError::ApiError(format!("Failed to update node status: {}", e)))
+        }
+    }
+}
+
+pub async fn update_node_availability(
+    api_url: &str,
+    node_id: &str,
+    available: bool
+) -> Result<bool> {
+    let url = format!("{}/nodes/{}/availability", api_url, node_id);
+    
+    // Create the payload
+    let payload = json!({
+        "available": available,
+        "timestamp": chrono::Utc::now().timestamp()
+    });
+    
+    let payload_str = payload.to_string();
+    
+    // Send the request
+    match ureq::post(&url)
+        .content_type("application/json")
+        .send(payload_str)
+    {
+        Ok(_) => {
+            debug!("Node availability updated successfully");
+            Ok(true)
+        },
+        Err(e) => {
+            error!("Failed to update node availability: {}", e);
+            Err(NodeError::ApiError(format!("Failed to update node availability: {}", e)))
         }
     }
 }
@@ -59,7 +91,7 @@ pub async fn assign_job(
     let result = tokio::task::spawn_blocking(move || {
         match ureq::post(&url)
             .content_type("application/json")
-            .send_string(&job_json)
+            .send(job_json)
         {
             Ok(_) => Ok(true),
             Err(e) => Err(NodeError::ApiError(format!("Failed to assign job: {}", e)))
@@ -103,7 +135,7 @@ pub async fn update_job_status(
     let result = tokio::task::spawn_blocking(move || {
         match ureq::post(&url)
             .content_type("application/json")
-            .send_string(&status_json)
+            .send(status_json)
         {
             Ok(response) => {
                 match response.into_json::<Value>() {
@@ -120,4 +152,3 @@ pub async fn update_job_status(
         Err(e) => Err(NodeError::ApiError(format!("Task join error: {}", e)))
     }
 }
-

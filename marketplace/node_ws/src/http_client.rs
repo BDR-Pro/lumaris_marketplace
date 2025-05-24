@@ -139,7 +139,7 @@ pub async fn update_job_status(
         {
             Ok(response) => {
                 // Parse the response body as JSON
-                match serde_json::from_reader(response.into_reader()) {
+                match response.into_json() {
                     Ok(json) => Ok(json),
                     Err(e) => Err(NodeError::SerializationError(e))
                 }

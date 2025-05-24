@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Duration;
 use serde_json::json;
-use sysinfo::{System, CpuExt};
+use sysinfo::{System, SystemExt};
 
 pub struct StatsSender {
     ws_url: String,
@@ -29,7 +29,7 @@ impl StatsSender {
                 sys.refresh_all();
                 
                 // Get CPU and memory usage
-                let cpu_usage = sys.global_cpu_info().cpu_usage();
+                let cpu_usage = sys.global_cpu_usage();
                 let total_memory = sys.total_memory();
                 let used_memory = sys.used_memory();
                 let memory_usage = if total_memory > 0 {
@@ -39,7 +39,7 @@ impl StatsSender {
                 };
                 
                 // Create JSON payload
-                let json = json!({
+                let json_payload = json!({
                     "type": "node_stats",
                     "node_id": node_id,
                     "stats": {
@@ -48,12 +48,12 @@ impl StatsSender {
                         "available": true,
                         "timestamp": chrono::Utc::now().timestamp()
                     }
-                }).to_string();
+                });
                 
                 // Try to send stats via HTTP as fallback
                 let _ = ureq::post("http://127.0.0.1:8000/nodes/stats")
                     .content_type("application/json")
-                    .send_json(&json);
+                    .send_string(&json_payload.to_string());
                 
                 // Sleep for the specified interval
                 thread::sleep(Duration::from_millis(interval_ms));

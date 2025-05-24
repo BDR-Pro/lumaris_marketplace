@@ -119,25 +119,23 @@ impl JobSplitter for DefaultJobSplitter {
                 });
             }
             
-            // Add an aggregator chunk if needed
-            if num_chunks > 1 {
-                let mut aggregator_payload = JobPayload {
-                    command: format!("{}_aggregate", payload.command),
-                    args: vec![format!("--num-chunks={}", num_chunks)],
-                    input_data: None,
-                    env_vars: payload.env_vars.clone(),
-                };
-                
-                let aggregator_chunk = JobChunk {
-                    chunk_id: (num_chunks + 1) as u64,
-                    parent_job_id: job_id,
-                    payload: aggregator_payload,
-                    dependencies: (1..=num_chunks as u64).collect(), // Depends on all other chunks
-                    estimated_work_units: 10, // Small fixed cost for aggregation
-                };
-                
-                chunks.push(aggregator_chunk);
-            }
+            // Create an aggregator chunk that will combine results
+            let aggregator_payload = JobPayload {
+                command: format!("{}_aggregate", payload.command),
+                args: payload.args.clone(),
+                input_data: None,  // Aggregator doesn't need input data
+                env_vars: payload.env_vars.clone(),
+            };
+            
+            let aggregator_chunk = JobChunk {
+                chunk_id: (num_chunks + 1) as u64,
+                parent_job_id: job_id,
+                payload: aggregator_payload,
+                dependencies: (1..=num_chunks as u64).collect(), // Depends on all other chunks
+                estimated_work_units: 10, // Small fixed cost for aggregation
+            };
+            
+            chunks.push(aggregator_chunk);
             
             chunks
         } else {
@@ -161,12 +159,20 @@ impl JobSplitter for DefaultJobSplitter {
         }
         
         // Find the highest chunk_id (assumed to be the aggregator)
-        if let Some(max_chunk) = chunks.iter_mut().max_by_key(|c| c.chunk_id) {
-            // Make it depend on all other chunks
-            max_chunk.dependencies = chunks.iter()
-                .filter(|c| c.chunk_id != max_chunk.chunk_id)
+        if let Some(max_chunk_id) = chunks.iter().map(|c| c.chunk_id).max() {
+            // Find all other chunk IDs
+            let dependency_ids: Vec<u64> = chunks.iter()
+                .filter(|c| c.chunk_id != max_chunk_id)
                 .map(|c| c.chunk_id)
                 .collect();
+            
+            // Update the dependencies for the max chunk
+            for chunk in chunks.iter_mut() {
+                if chunk.chunk_id == max_chunk_id {
+                    chunk.dependencies = dependency_ids.clone();
+                    break;
+                }
+            }
         }
     }
 }
@@ -207,18 +213,20 @@ impl ResultAggregator for DefaultResultAggregator {
         // Combine outputs
         let combined_output = results.iter()
             .filter_map(|r| r.output.as_ref())
+            .map(|s| s.as_str())
             .collect::<Vec<_>>()
             .join("\n");
         
         // Combine errors
         let errors: Vec<_> = results.iter()
             .filter_map(|r| r.error.as_ref())
+            .map(|s| s.as_str())
             .collect();
         
         let combined_error = if errors.is_empty() {
             None
         } else {
-            Some(errors.join("\n"))
+            Some(errors.join("\n").to_string())
         };
         
         // Calculate aggregate stats
@@ -261,7 +269,7 @@ impl ResultAggregator for DefaultResultAggregator {
         }
     }
     
-    fn is_job_complete(&self, job_id: u64, received_chunks: &[u64]) -> bool {
+    fn is_job_complete(&self, _job_id: u64, received_chunks: &[u64]) -> bool {
         // In a real implementation, we'd check against expected chunks from a database
         // For this example, we'll assume we're complete if we have at least one result
         !received_chunks.is_empty()

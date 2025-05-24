@@ -353,3 +353,34 @@ async fn handle_job_status_update(
         let _ = tx.send(ws_msg.clone()).await;
     }
 }
+
+async fn broadcast_job_status_update(
+    job_id: u64, 
+    status: &str, 
+    connections: &NodeConnections
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    // Get status as string
+    let status_str = match status {
+        JobStatus::Queued => "queued",
+        JobStatus::Matching => "matching",
+        JobStatus::Assigned => "assigned",
+        JobStatus::Running => "running",
+        JobStatus::Completed => "completed",
+        JobStatus::Failed => "failed",
+    };
+    
+    // Create the update message
+    let update_msg = serde_json::json!({
+        "type": "job_status_update",
+        "job_id": job_id,
+        "status": status
+    }).to_string();
+    
+    let ws_msg = Message::Text(update_msg.into());
+    
+    // Send to all connected nodes (in a real system, we'd filter by relevance)
+    let connections = connections.lock().await;
+    for (_, tx) in connections.iter() {
+        let _ = tx.send(ws_msg.clone()).await;
+    }
+}

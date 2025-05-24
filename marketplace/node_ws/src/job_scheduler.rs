@@ -30,19 +30,19 @@ pub struct ScheduledJob {
 }
 
 pub struct JobScheduler {
-    matchmaker: SharedMatchMaker,
-    job_manager: Arc<Mutex<DistributedJobManager>>,
     scheduled_jobs: HashMap<u64, ScheduledJob>,
     next_job_id: u64,
+    matchmaker: SharedMatchMaker,
+    job_manager: Arc<Mutex<DistributedJobManager>>,
 }
 
 impl JobScheduler {
     pub fn new(matchmaker: SharedMatchMaker) -> Self {
         Self {
-            matchmaker,
-            job_manager: Arc::new(Mutex::new(DistributedJobManager::default())),
             scheduled_jobs: HashMap::new(),
             next_job_id: 1,
+            matchmaker,
+            job_manager: Arc::new(Mutex::new(DistributedJobManager::new_default())),
         }
     }
     
@@ -224,7 +224,7 @@ pub type SharedJobScheduler = Arc<Mutex<JobScheduler>>;
 // Helper to create a new job scheduler
 pub fn create_job_scheduler(matchmaker: SharedMatchMaker) -> SharedJobScheduler {
     let scheduler = JobScheduler {
-        jobs: HashMap::new(),
+        scheduled_jobs: HashMap::new(),
         next_job_id: 1,
         matchmaker,
         job_manager: Arc::new(Mutex::new(DistributedJobManager::new_default())),

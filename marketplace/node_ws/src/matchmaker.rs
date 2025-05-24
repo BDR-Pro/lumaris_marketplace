@@ -15,6 +15,9 @@ pub struct NodeCapabilities {
     pub last_updated: u64,  // Unix timestamp
 }
 
+// Alias for clarity
+pub type Node = NodeCapabilities;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct JobRequirements {
     pub job_id: u64,
@@ -235,11 +238,11 @@ impl MatchMaker {
         }
     }
     
-    pub fn get_node_by_id(&self, node_id: &str) -> Option<&Node> {
+    pub fn get_node_by_id(&self, node_id: &str) -> Option<&NodeCapabilities> {
         self.nodes.get(node_id)
     }
     
-    pub fn get_node_by_id_mut(&mut self, node_id: &str) -> Option<&mut Node> {
+    pub fn get_node_by_id_mut(&mut self, node_id: &str) -> Option<&mut NodeCapabilities> {
         self.nodes.get_mut(node_id)
     }
 }

@@ -139,7 +139,8 @@ pub async fn update_job_status(
         {
             Ok(response) => {
                 // Parse the response body as JSON
-                match serde_json::from_str(&response.into_string()?) {
+                let body = response.into_string()?;
+                match serde_json::from_str(&body) {
                     Ok(json) => Ok(json),
                     Err(e) => Err(NodeError::SerializationError(e))
                 }

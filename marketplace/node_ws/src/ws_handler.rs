@@ -18,13 +18,15 @@ use crate::matchmaker::{
     SharedMatchMaker, NodeCapabilities, 
     JobStatus, MatchmakerMessage
 };
+use crate::http_client::{update_node_availability, update_job_status};
+use crate::error::{NodeError, Result};
 
 // Type aliases for clarity
 type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Main WebSocket server function
-pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> WsResult<()> {
+pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> Result<()> {
     info!("🚀 WebSocket server listening on {}", addr);
     
     // Store active connections
@@ -48,8 +50,11 @@ pub async fn run_ws_server(addr: &str, matchmaker: SharedMatchMaker) -> WsResult
             }).to_string());
         }
     });
-
-    // Accept incoming WebSocket connections
+    
+    // Create a TCP listener
+    let listener = TcpListener::bind(addr).await?;
+    
+    // Accept connections
     while let Ok((stream, addr)) = listener.accept().await {
         info!("New connection from: {}", addr);
         let peer = format!("{}", addr);
@@ -375,14 +380,14 @@ pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = 
     // Store the sender in the matchmaker
     {
         let mut mm = matchmaker.lock().unwrap();
-        mm.tx = tx;
+        mm.set_tx(tx);
     }
     
     // Create the WebSocket handler
     warp::path("ws")
         .and(warp::ws())
         .and(warp::any().map(move || {
-            let rx_clone = rx.subscribe();
+            let rx_clone = rx.resubscribe();
             (Arc::clone(&matchmaker), rx_clone)
         }))
         .map(|ws: warp::ws::Ws, (matchmaker, rx)| {

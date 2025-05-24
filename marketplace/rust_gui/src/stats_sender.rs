@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Duration;
 use serde_json::json;
-use sysinfo::{System, SystemExt};
+use sysinfo::System;
 
 pub struct StatsSender {
     ws_url: String,
@@ -29,7 +29,7 @@ impl StatsSender {
                 sys.refresh_all();
                 
                 // Get CPU and memory usage
-                let cpu_usage = sys.global_cpu_info().cpu_usage();
+                let cpu_usage = sys.global_cpu_usage();
                 let total_memory = sys.total_memory();
                 let used_memory = sys.used_memory();
                 let memory_usage = if total_memory > 0 {

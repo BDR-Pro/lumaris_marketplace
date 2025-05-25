@@ -103,7 +103,7 @@ impl JobSplitter for DefaultJobSplitter {
             let lines: Vec<&str> = data.lines().collect();
             
             // Calculate number of chunks based on input size and threshold
-            let num_chunks = (lines.len() + self.chunk_size_threshold - 1) / self.chunk_size_threshold;
+            let num_chunks = lines.len().div_ceil(self.chunk_size_threshold);
             
             // Create chunks
             let mut chunks = Vec::with_capacity(num_chunks + 1); // +1 for aggregator
@@ -213,15 +213,15 @@ impl JobSplitter for DefaultJobSplitter {
             let chunk_data = lines[start..end].join("\n");
             
             let chunk_payload = JobPayload {
-                command: job_data.payload.command.clone(),
-                args: job_data.payload.args.clone(),
+                command: "process".to_string(),
+                args: vec![],
                 input_data: Some(chunk_data),
-                env_vars: job_data.payload.env_vars.clone(),
+                env_vars: HashMap::new(),
             };
             
             let chunk = JobChunk {
                 chunk_id: (i + 1) as u64,
-                parent_job_id: job_data.job_id,
+                parent_job_id: job_id,
                 payload: chunk_payload,
                 dependencies: Vec::new(),
                 estimated_work_units: (end - start) as u64,
@@ -570,7 +570,7 @@ pub fn estimate_chunk_size(data_size: usize, available_nodes: usize) -> usize {
     let target_chunks = available_nodes.saturating_mul(2);
     
     // Calculate chunk size
-    let chunk_size = (data_size + target_chunks - 1) / target_chunks;
+    let chunk_size = data_size.div_ceil(target_chunks);
     
     // Ensure chunk size is at least 100 records for efficiency
     std::cmp::max(chunk_size, 100)

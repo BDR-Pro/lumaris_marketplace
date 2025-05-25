@@ -7,10 +7,10 @@ description = "WebSocket server for Lumaris Marketplace node connections"
 [dependencies]
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
-futures-util = { workspace = true }
+futures-util = "0.3"
 serde_json = { workspace = true }
 tungstenite = { workspace = true }
-ureq = { workspace = true }
+reqwest = { version = "0.11", features = ["json"] }
 sysinfo = { workspace = true }
 serde = { workspace = true }
 url = { workspace = true }
@@ -22,3 +22,4 @@ thiserror = { workspace = true }
 distributed_engine = { path = "../distributed_engine" }
 toml = "0.8"
 chrono = "0.4"
+uuid = { version = "1.4", features = ["v4"] }

@@ -1,53 +1,43 @@
 use log::{error, debug};
-use reqwest;
+use serde_json::{json, Value};
 use crate::error::{NodeError, Result};
-use serde_json::{self, Value};
-use std::collections::HashMap;
 
 pub async fn update_node_status(
-    api_url: &str, 
-    node_id: &str, 
-    cpu_usage: f32, 
-    memory_usage: f32, 
-    available: bool
-) -> Result<bool> {
-    let url = format!("{}/nodes/{}/status", api_url, node_id);
+    api_url: &str,
+    node_id: &str,
+    status: &str
+) -> Result<()> {
+    let url = format!("{}/api/nodes/{}/status", api_url, node_id);
     
     // Create the payload
     let payload = json!({
-        "cpu_usage": cpu_usage,
-        "memory_usage": memory_usage,
-        "available": available,
+        "status": status,
         "timestamp": chrono::Utc::now().timestamp()
     });
     
-    debug!("Updating node status: {}", payload);
-    
-    let url = url.clone();
-    let payload_str = payload.to_string();
-    
     // Send the request
-    match ureq::post(&url)
-        .content_type("application/json")
-        .send(payload_str)
-    {
-        Ok(_) => {
-            debug!("Node status updated successfully");
-            Ok(true)
-        },
-        Err(e) => {
-            error!("Failed to update node status: {}", e);
-            Err(NodeError::ApiError(format!("Failed to update node status: {}", e)))
+    match reqwest::Client::new()
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await {
+            Ok(_) => {
+                debug!("Updated node status: {}", status);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to update node status: {}", e);
+                Err(NodeError::ApiError(format!("Failed to update node status: {}", e)))
+            }
         }
-    }
 }
 
 pub async fn update_node_availability(
     api_url: &str,
     node_id: &str,
     available: bool
-) -> Result<bool> {
-    let url = format!("{}/nodes/{}/availability", api_url, node_id);
+) -> Result<()> {
+    let url = format!("{}/api/nodes/{}/availability", api_url, node_id);
     
     // Create the payload
     let payload = json!({
@@ -55,54 +45,51 @@ pub async fn update_node_availability(
         "timestamp": chrono::Utc::now().timestamp()
     });
     
-    let payload_str = payload.to_string();
-    
     // Send the request
-    match ureq::post(&url)
-        .content_type("application/json")
-        .send(payload_str)
-    {
-        Ok(_) => {
-            debug!("Node availability updated successfully");
-            Ok(true)
-        },
-        Err(e) => {
-            error!("Failed to update node availability: {}", e);
-            Err(NodeError::ApiError(format!("Failed to update node availability: {}", e)))
+    match reqwest::Client::new()
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await {
+            Ok(_) => {
+                debug!("Updated node availability: {}", available);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to update node availability: {}", e);
+                Err(NodeError::ApiError(format!("Failed to update node availability: {}", e)))
+            }
         }
-    }
 }
 
 pub async fn assign_job(
     api_url: &str,
     job_id: u64,
-    node_id: &str,
-    job_data: Value
-) -> Result<bool> {
-    let url = format!("{}/jobs/{}/assign/{}", api_url, job_id, node_id);
+    node_id: &str
+) -> Result<()> {
+    let url = format!("{}/api/jobs/{}/assign", api_url, job_id);
     
-    // Create the job assignment payload
-    let job_json = serde_json::to_string(&job_data).map_err(|e| {
-        NodeError::SerializationError(e)
-    })?;
+    // Create the payload
+    let payload = json!({
+        "node_id": node_id,
+        "timestamp": chrono::Utc::now().timestamp()
+    });
     
-    let url = url.clone();
-    
-    // Spawn a blocking task for the HTTP request
-    let result = tokio::task::spawn_blocking(move || {
-        match ureq::post(&url)
-            .content_type("application/json")
-            .send(job_json)
-        {
-            Ok(_) => Ok(true),
-            Err(e) => Err(NodeError::ApiError(format!("Failed to assign job: {}", e)))
+    // Send the request
+    match reqwest::Client::new()
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await {
+            Ok(_) => {
+                debug!("Assigned job {} to node {}", job_id, node_id);
+                Ok(())
+            },
+            Err(e) => {
+                error!("Failed to assign job: {}", e);
+                Err(NodeError::ApiError(format!("Failed to assign job: {}", e)))
+            }
         }
-    }).await;
-    
-    match result {
-        Ok(res) => res,
-        Err(e) => Err(NodeError::ApiError(format!("Task join error: {}", e)))
-    }
 }
 
 pub async fn update_job_status(
@@ -110,15 +97,15 @@ pub async fn update_job_status(
     job_id: u64,
     status: &str,
     result_data: Option<Value>
-) -> Result<Value> {
-    let url = format!("{}/jobs/{}/status", api_url, job_id);
+) -> Result<()> {
+    let url = format!("{}/api/jobs/{}/status", api_url, job_id);
     
-    // Create the status update payload
-    let status_payload = match result_data {
+    // Create the payload based on whether result data is available
+    let payload = match result_data {
         Some(data) => json!({
             "status": status,
-            "result": data,
-            "timestamp": chrono::Utc::now().timestamp()
+            "timestamp": chrono::Utc::now().timestamp(),
+            "result": data
         }),
         None => json!({
             "status": status,
@@ -126,37 +113,26 @@ pub async fn update_job_status(
         })
     };
     
-    let status_json = serde_json::to_string(&status_payload).map_err(|e| {
-        NodeError::SerializationError(e)
-    })?;
-    
-    let url = url.clone();
-    
-    // Spawn a blocking task for the HTTP request
-    let result = tokio::task::spawn_blocking(move || {
-        match ureq::post(&url)
-            .content_type("application/json")
-            .send(status_json)
-        {
+    // Send the request
+    match reqwest::Client::new()
+        .post(&url)
+        .json(&payload)
+        .send()
+        .await {
             Ok(response) => {
-                // Parse the response body as JSON
-                let body_result = response.text();
-                let body = match body_result {
-                    Ok(text) => text,
-                    Err(e) => return Err(NodeError::ApiError(e.to_string())),
-                };
-                
-                match serde_json::from_str::<serde_json::Value>(&body) {
-                    Ok(json) => Ok(json),
-                    Err(e) => Err(NodeError::SerializationError(e))
+                let status = response.status();
+                if status.is_success() {
+                    debug!("Updated job status: {}", status);
+                    Ok(())
+                } else {
+                    let error_msg = format!("API returned error status: {}", status);
+                    error!("{}", error_msg);
+                    Err(NodeError::ApiError(error_msg))
                 }
             },
-            Err(e) => Err(NodeError::ApiError(format!("Failed to update job status: {}", e)))
+            Err(e) => {
+                error!("Failed to update job status: {}", e);
+                Err(NodeError::ApiError(format!("Failed to update job status: {}", e)))
+            }
         }
-    }).await;
-    
-    match result {
-        Ok(res) => res,
-        Err(e) => Err(NodeError::ApiError(format!("Task join error: {}", e)))
-    }
 }

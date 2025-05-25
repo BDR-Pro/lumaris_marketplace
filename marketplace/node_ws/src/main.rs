@@ -13,6 +13,8 @@ use config::Config;
 use log::{info, error};
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
@@ -50,7 +52,8 @@ async fn main() {
     
     // Start WebSocket server for node connections
     info!("🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...");
-    if let Err(e) = run_ws_server(matchmaker.clone()).await {
+    let connections = Arc::new(Mutex::new(HashMap::new()));
+    if let Err(e) = run_ws_server("0.0.0.0:3030", matchmaker.clone(), &connections).await {
         error!("WebSocket server error: {}", e);
     }
 }

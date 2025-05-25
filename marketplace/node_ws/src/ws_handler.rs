@@ -30,11 +30,12 @@ type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSen
 // Start the WebSocket server
 pub async fn run_ws_server(
     addr: &str,
+    api_url: &str,
     matchmaker: SharedMatchMaker,
     connections: &NodeConnections
 ) -> Result<()> {
     // Create the WebSocket handler
-    let ws_route = create_ws_handler(matchmaker.clone(), connections.clone());
+    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone());
     
     // Create a health check route
     let health_route = warp::path("health")
@@ -55,6 +56,7 @@ pub async fn run_ws_server(
 // Handle WebSocket connections
 async fn handle_websocket_connection(
     ws: WebSocket,
+    api_url: String,
     matchmaker: SharedMatchMaker,
     _rx: broadcast::Receiver<String>,
     connections: NodeConnections
@@ -83,6 +85,7 @@ async fn handle_websocket_connection(
     let peer_id_clone = peer_id.clone();
     let connections_clone = connections.clone();
     let ws_sender_tx_clone = ws_sender_tx.clone();
+    let api_url_clone = api_url.clone();
     
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
@@ -97,6 +100,7 @@ async fn handle_websocket_connection(
     // Handle incoming WebSocket messages
     let message_handler = tokio::spawn({
         let ws_sender_tx = ws_sender_tx_clone.clone();
+        let api_url_clone = api_url_clone.clone();
         async move {
             while let Some(result) = ws_receiver.next().await {
                 match result {
@@ -110,7 +114,7 @@ async fn handle_websocket_connection(
                         let msg_text = msg.to_str().unwrap_or_default();
                         
                         // Process the message
-                        if let Err(e) = process_message(msg_text, &peer_id_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
+                        if let Err(e) = process_message(msg_text, &peer_id_clone, &api_url_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
                             error!("Error processing message: {}", e);
                             
                             // Send error response
@@ -168,6 +172,7 @@ async fn handle_websocket_connection(
 async fn process_message(
     message: &str,
     peer_id: &str,
+    api_url: &str,
     matchmaker: &SharedMatchMaker,
     connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>
@@ -202,8 +207,9 @@ async fn process_message(
                 
                 // Update node availability in the API
                 let node_id_copy = peer_id.to_string();
+                let api_url_copy = api_url.to_string();
                 tokio::spawn(async move {
-                    if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, true).await {
+                    if let Err(e) = update_node_availability(&api_url_copy, &node_id_copy, true).await {
                         error!("Failed to update node availability in API: {}", e);
                     }
                 });
@@ -231,8 +237,9 @@ async fn process_message(
                 
                 // Update node availability in the API
                 let node_id_copy = peer_id.to_string();
+                let api_url_copy = api_url.to_string();
                 tokio::spawn(async move {
-                    if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, available).await {
+                    if let Err(e) = update_node_availability(&api_url_copy, &node_id_copy, available).await {
                         error!("Failed to update node availability in API: {}", e);
                     }
                 });
@@ -266,8 +273,9 @@ async fn process_message(
                     // Update job status in the API
                     let job_id_copy = job_id;
                     let status_str_copy = status_str.to_string();
+                    let api_url_copy = api_url.to_string();
                     tokio::spawn(async move {
-                        if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
+                        if let Err(e) = update_job_status(&api_url_copy, job_id_copy, &status_str_copy, result_data).await {
                             error!("Failed to update job status: {}", e);
                         }
                     });
@@ -311,19 +319,24 @@ async fn handle_job_status_update(
 
 // Create a WebSocket handler for the matchmaker
 pub fn create_ws_handler(
+    api_url: &str,
     matchmaker: SharedMatchMaker,
     connections: NodeConnections
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a broadcast channel for sending messages to all connected clients
     let (tx, _rx) = broadcast::channel::<String>(100);
     
+    // Clone the API URL for use in the handler
+    let api_url = api_url.to_string();
+    
     // Create the WebSocket route
     warp::path("ws")
         .and(warp::ws())
+        .and(with_api_url(api_url))
         .and(with_matchmaker(matchmaker))
         .and(with_broadcaster(tx.clone()))
         .and(with_connections(connections))
-        .map(move |ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
+        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
             // Clone tx for the closure
             let tx_clone = tx.clone();
             
@@ -334,10 +347,15 @@ pub fn create_ws_handler(
                 // Handle the WebSocket connection
                 // Return a future that resolves to ()
                 async move {
-                    handle_websocket_connection(socket, matchmaker, rx, connections).await;
+                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections).await;
                 }
             })
         })
+}
+
+// Helper function to pass the API URL to the handler
+fn with_api_url(api_url: String) -> impl Filter<Extract = (String,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || api_url.clone())
 }
 
 // Helper function to pass the matchmaker to the handler

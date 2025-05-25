@@ -320,12 +320,15 @@ pub fn create_ws_handler(
     warp::path("ws")
         .and(warp::ws())
         .and(with_matchmaker(matchmaker))
-        .and(with_broadcaster(tx))
+        .and(with_broadcaster(tx.clone()))
         .and(with_connections(connections))
-        .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
-            ws.on_upgrade(|socket| {
+        .map(move |ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
+            // Clone tx for the closure
+            let tx_clone = tx.clone();
+            
+            ws.on_upgrade(move |socket| {
                 // Create a new receiver for this connection
-                let rx = tx.subscribe();
+                let rx = tx_clone.subscribe();
                 
                 // Handle the WebSocket connection
                 // Return a future that resolves to ()

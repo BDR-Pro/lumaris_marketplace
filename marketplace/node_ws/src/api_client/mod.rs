@@ -13,6 +13,10 @@ use std::collections::HashMap;
 mod legacy;
 pub use legacy::*;
 
+// Include tests
+#[cfg(test)]
+mod tests;
+
 // User role enum
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UserRole {
@@ -602,4 +606,3 @@ impl LumarisApiClient {
         }
     }
 }
-

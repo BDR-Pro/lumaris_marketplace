@@ -151,6 +151,7 @@ async fn handle_websocket_connection(
                     error!("Error sending message: {}", e);
                     break;
                 }
+
             }
         }
     });

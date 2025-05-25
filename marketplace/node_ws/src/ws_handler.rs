@@ -24,7 +24,7 @@ use crate::matchmaker::{
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Type alias for node connections
-type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
+type NodeConnections = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
 
 // Start the WebSocket server
 pub async fn run_ws_server(
@@ -51,13 +51,13 @@ pub async fn run_ws_server(
     Ok(())
 }
 
-// Handle a WebSocket connection
+// Handle WebSocket connections
 async fn handle_websocket_connection(
     ws: WebSocket,
     matchmaker: SharedMatchMaker,
     _rx: broadcast::Receiver<String>,
     connections: NodeConnections
-) -> WsResult<()> {
+) {
     // Split the WebSocket into a sender and receiver
     let (ws_tx, mut ws_rx) = ws.split();
     
@@ -70,18 +70,30 @@ async fn handle_websocket_connection(
     
     // Store the sender in the connections map
     {
-        let mut conns = connections.lock().unwrap();
+        let mut conns = connections.lock().await;
         conns.insert(peer_id.clone(), tx.clone());
     }
     
     // Clone for use in the task
     let matchmaker_clone = matchmaker.clone();
     let peer_id_clone = peer_id.clone();
-    let ws_tx_clone = ws_tx.clone();
     let connections_clone = connections.clone();
     
+    // Create a channel for sending messages to the WebSocket
+    let (ws_sender_tx, mut ws_sender_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    
+    // Task to forward messages from the channel to the WebSocket
+    let ws_sender_task = tokio::spawn(async move {
+        while let Some(message) = ws_sender_rx.recv().await {
+            if let Err(e) = ws_tx.send(message).await {
+                error!("Error sending message to WebSocket: {}", e);
+                break;
+            }
+        }
+    });
+    
     // Handle incoming WebSocket messages
-    tokio::task::spawn(async move {
+    let message_handler = tokio::spawn(async move {
         while let Some(result) = ws_rx.next().await {
             match result {
                 Ok(msg) => {
@@ -94,7 +106,7 @@ async fn handle_websocket_connection(
                     let msg_text = msg.to_str().unwrap_or_default();
                     
                     // Process the message
-                    if let Err(e) = process_message(msg_text, &peer_id_clone, &matchmaker_clone, &connections_clone).await {
+                    if let Err(e) = process_message(msg_text, &peer_id_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
                         error!("Error processing message: {}", e);
                         
                         // Send error response
@@ -103,7 +115,7 @@ async fn handle_websocket_connection(
                             "message": format!("Error processing message: {}", e)
                         }).to_string();
                         
-                        if let Err(e) = ws_tx_clone.send(Message::text(error_response)).await {
+                        if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
                             error!("Error sending error response: {}", e);
                             break;
                         }
@@ -118,7 +130,7 @@ async fn handle_websocket_connection(
         
         // WebSocket closed, remove from connections
         {
-            let mut conns = connections_clone.lock().unwrap();
+            let mut conns = connections_clone.lock().await;
             conns.remove(&peer_id_clone);
         }
         
@@ -126,17 +138,22 @@ async fn handle_websocket_connection(
     });
     
     // Forward broadcast messages to this WebSocket
-    let ws_tx_forward = ws_tx.clone();
-    tokio::task::spawn(async move {
+    let ws_sender_tx_clone = ws_sender_tx.clone();
+    let forward_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            if let Err(e) = ws_tx_forward.send(Message::text(msg.clone())).await {
+            if let Err(e) = ws_sender_tx_clone.send(Message::text(msg.clone())) {
                 error!("Error sending message: {}", e);
                 break;
             }
         }
     });
     
-    Ok(())
+    // Wait for all tasks to complete
+    tokio::select! {
+        _ = message_handler => {},
+        _ = forward_task => {},
+        _ = ws_sender_task => {},
+    }
 }
 
 // Process incoming WebSocket messages
@@ -144,7 +161,8 @@ async fn process_message(
     message: &str,
     peer_id: &str,
     matchmaker: &SharedMatchMaker,
-    connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>
+    connections: &Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
+    ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>
 ) -> WsResult<()> {
     // Parse the message as JSON
     let parsed: Value = serde_json::from_str(message)?;
@@ -182,18 +200,16 @@ async fn process_message(
                     }
                 });
                 
-                // Send a confirmation message back through the connection
+                // Send a confirmation message back through the WebSocket
                 let response = json!({
                     "type": "registration_confirmation",
                     "node_id": peer_id,
                     "status": "registered"
                 }).to_string();
                 
-                // Get the sender for this connection
-                if let Some(tx) = connections.lock().unwrap().get(peer_id) {
-                    if let Err(e) = tx.send(response) {
-                        error!("Error sending registration confirmation: {}", e);
-                    }
+                // Send the response directly to the WebSocket
+                if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                    error!("Error sending registration confirmation: {}", e);
                 }
             },
             "node_status" => {
@@ -265,7 +281,7 @@ async fn process_message(
 async fn handle_job_status_update(
     job_id: u64,
     status_str: &str,
-    connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>
+    connections: &Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>
 ) -> WsResult<()> {
     // Create a status update message
     let update_msg = json!({
@@ -275,7 +291,7 @@ async fn handle_job_status_update(
     }).to_string();
     
     // Broadcast to all connected clients
-    let conns = connections.lock().unwrap();
+    let conns = connections.lock().await;
     for (_, tx) in conns.iter() {
         if let Err(e) = tx.send(update_msg.clone()) {
             error!("Error broadcasting job status update: {}", e);
@@ -291,7 +307,7 @@ pub fn create_ws_handler(
     connections: NodeConnections
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a broadcast channel for sending messages to all connected clients
-    let (tx, _rx) = broadcast::channel(100);
+    let (tx, _rx) = broadcast::channel::<String>(100);
     
     // Create the WebSocket route
     warp::path("ws")
@@ -299,7 +315,7 @@ pub fn create_ws_handler(
         .and(with_matchmaker(matchmaker))
         .and(with_broadcaster(tx))
         .and(with_connections(connections))
-        .map(|ws: warp::ws::Ws, matchmaker, tx, connections| {
+        .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
             ws.on_upgrade(move |socket| {
                 // Create a new receiver for this connection
                 let rx = tx.subscribe();

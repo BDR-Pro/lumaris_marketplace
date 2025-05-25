@@ -196,7 +196,7 @@ async fn process_message(
                 
                 // Register the node with the matchmaker
                 {
-                    let mut mm = matchmaker.lock().unwrap();
+                    let mut mm = matchmaker.lock().await;
                     mm.update_node(node.clone());
                 }
                 
@@ -225,7 +225,7 @@ async fn process_message(
                 let available = parsed["available"].as_bool().unwrap_or(true);
                 
                 {
-                    let mut mm = matchmaker.lock().unwrap();
+                    let mut mm = matchmaker.lock().await;
                     mm.update_node_availability(peer_id.to_string(), available);
                 }
                 
@@ -259,7 +259,7 @@ async fn process_message(
                     
                     // Update job status in matchmaker
                     {
-                        let mut mm = matchmaker.lock().unwrap();
+                        let mut mm = matchmaker.lock().await;
                         let _ = mm.update_job_status(job_id, status_str.to_string());
                     }
                     
@@ -324,12 +324,15 @@ pub fn create_ws_handler(
         .and(with_broadcaster(tx))
         .and(with_connections(connections))
         .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
-            ws.on_upgrade(move |socket| {
+            ws.on_upgrade(|socket| {
                 // Create a new receiver for this connection
                 let rx = tx.subscribe();
                 
                 // Handle the WebSocket connection
-                handle_websocket_connection(socket, matchmaker, rx, connections)
+                // Return a future that resolves to ()
+                async move {
+                    handle_websocket_connection(socket, matchmaker, rx, connections).await;
+                }
             })
         })
 }

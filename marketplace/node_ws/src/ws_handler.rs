@@ -1,30 +1,31 @@
-// node_ws/src/ws_handler.rs
-// WebSocket handler for node communication
-
-use futures_util::{SinkExt, StreamExt};
-use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::sync::broadcast;
+use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
+use tokio::stream::{StreamExt};
+use warp::ws::{Message, WebSocket};
 use warp::Filter;
+use uuid::Uuid;
+use chrono::Utc;
 use log::{info, error, debug};
 use serde_json::{json, Value};
-use chrono::Utc;
-use warp::ws::{Message, WebSocket};
-use uuid::Uuid;
 
-use crate::error::Result;
-use crate::http_client::{update_node_availability, update_job_status};
+use crate::api_client::{
+    update_node_availability,
+    update_job_status
+};
+
 use crate::matchmaker::{
-    SharedMatchMaker, NodeCapabilities,
+    SharedMatchMaker,
+    NodeCapabilities,
     JobStatus
 };
 
-// Type alias for WebSocket result
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // Type alias for node connections
-type NodeConnections = Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
+type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>;
 
 // Start the WebSocket server
 pub async fn run_ws_server(
@@ -74,13 +75,13 @@ async fn handle_websocket_connection(
         conns.insert(peer_id.clone(), tx.clone());
     }
     
-    // Clone for use in the task
+    // Create a channel for sending messages to the WebSocket
+    let (ws_sender_tx, mut ws_sender_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    
+    // Clone for use in the tasks
     let matchmaker_clone = matchmaker.clone();
     let peer_id_clone = peer_id.clone();
     let connections_clone = connections.clone();
-    
-    // Create a channel for sending messages to the WebSocket
-    let (ws_sender_tx, mut ws_sender_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
     let ws_sender_tx_clone = ws_sender_tx.clone();
     
     // Task to forward messages from the channel to the WebSocket
@@ -167,7 +168,7 @@ async fn process_message(
     message: &str,
     peer_id: &str,
     matchmaker: &SharedMatchMaker,
-    connections: &Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
+    connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>
 ) -> WsResult<()> {
     // Parse the message as JSON
@@ -287,7 +288,7 @@ async fn process_message(
 async fn handle_job_status_update(
     job_id: u64,
     status_str: &str,
-    connections: &Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>
+    connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>
 ) -> WsResult<()> {
     // Create a status update message
     let update_msg = json!({
@@ -346,3 +347,4 @@ fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (bro
 fn with_connections(connections: NodeConnections) -> impl Filter<Extract = (NodeConnections,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || connections.clone())
 }
+

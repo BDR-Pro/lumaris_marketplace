@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.http import require_http_methods
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, F, Q
 from django.core.paginator import Paginator
@@ -364,7 +364,6 @@ def htmx_marketplace_stats(request):
 
 # WebSocket handler
 @login_required
-@csrf_exempt
 @require_http_methods(["POST"])
 def ws_connect(request):
     """Connect to the WebSocket server."""
@@ -372,7 +371,6 @@ def ws_connect(request):
     return JsonResponse({"status": "connected"})
 
 @login_required
-@csrf_exempt
 @require_http_methods(["POST"])
 def ws_disconnect(request):
     """Disconnect from the WebSocket server."""

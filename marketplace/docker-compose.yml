@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # FastAPI backend service
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: lumaris-api
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - API_KEY=${API_KEY}
+      - DEBUG=${DEBUG:-false}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - WS_PORT=${WS_PORT:-3030}
+    volumes:
+      - ./api:/app
+    depends_on:
+      - db
+    networks:
+      - lumaris-network
+
+  # Django admin dashboard
+  frontend:
+    build:
+      context: ./admin_dashboard
+      dockerfile: Dockerfile
+    container_name: lumaris-frontend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - API_KEY=${API_KEY}
+      - DEBUG=${DEBUG:-false}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - FASTAPI_URL=http://api:8080
+      - WS_URL=ws://api:3030/ws
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+    volumes:
+      - ./admin_dashboard:/app
+      - static_volume:/app/staticfiles
+    depends_on:
+      - api
+      - db
+    networks:
+      - lumaris-network
+
+  # Database service
+  db:
+    image: postgres:14
+    container_name: lumaris-db
+    restart: always
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    ports:
+      - "5432:5432"
+    networks:
+      - lumaris-network
+
+  # Nginx service for reverse proxy and SSL termination
+  nginx:
+    image: nginx:1.21
+    container_name: lumaris-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/ssl:/etc/nginx/ssl
+      - static_volume:/app/staticfiles
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - lumaris-network
+
+networks:
+  lumaris-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  static_volume:
+

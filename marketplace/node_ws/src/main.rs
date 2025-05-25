@@ -35,6 +35,7 @@ async fn main() {
     ");
     
     // Get API URL from environment variables
+    // #ignore-devskim: DS137138 - This is a fallback for local development only
     let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
     info!("API URL: {}", api_url);
     

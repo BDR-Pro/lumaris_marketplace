@@ -1,7 +1,8 @@
-use log::{info, error, debug};
-use serde_json::{json, Value};
-use tokio::task;
+use log::{error, debug};
+use reqwest;
 use crate::error::{NodeError, Result};
+use serde_json::{self, Value};
+use std::collections::HashMap;
 
 pub async fn update_node_status(
     api_url: &str, 

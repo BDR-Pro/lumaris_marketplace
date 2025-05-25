@@ -4,6 +4,7 @@ mod ws_handler;
 mod vm_manager;
 mod buyer_stats;
 mod seller_stats;
+mod ws_client;
 
 use log::{info, error};
 use dotenv::dotenv;
@@ -20,6 +21,8 @@ use matchmaker::create_matchmaker;
 use vm_manager::VmManager;
 use buyer_stats::BuyerStatsManager;
 use seller_stats::SellerStatsManager;
+use api_client::{ApiClientConfig, LumarisApiClient, UserRole};
+use ws_client::{WsClientConfig, LumarisWsClient};
 
 #[tokio::main]
 async fn main() {

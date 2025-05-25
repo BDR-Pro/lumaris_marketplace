@@ -1,113 +1,50 @@
-# Lumaris Node WebSocket Server
+# Lumaris Marketplace Node WebSocket Server
 
-This component provides the WebSocket server for Lumaris Marketplace node connections. It handles communication between seller nodes and the central marketplace.
+This component handles WebSocket connections from compute nodes in the Lumaris Marketplace.
 
-## Features
+## Configuration
 
-- WebSocket server for real-time node communication
-- REST API for job submission and management
-- Matchmaking system for assigning jobs to nodes
-- Job scheduling and status tracking
+The WebSocket server can be configured using environment variables:
 
-## Getting Started
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `API_URL` | URL of the Lumaris API server | `http://localhost:8000` |
+| `LOG_LEVEL` | Log level (info, debug, warn, error) | `info` |
 
-### Prerequisites
+## Security Considerations
 
-- Rust 1.56 or later
-- Cargo package manager
+For production deployments, always use HTTPS for the API URL:
 
-### Building
-
-```bash
-cargo build --release
+```
+export API_URL=https://api.yourdomain.com
 ```
 
-### Running
+## Running the Server
 
 ```bash
+# Set environment variables
+export API_URL=https://api.yourdomain.com
+
+# Run the server
 cargo run --release
 ```
 
-The server will start on:
-- WebSocket: `ws://127.0.0.1:9001`
-- REST API: `http://127.0.0.1:9002`
+## Development
 
-## API Endpoints
+For local development, you can use the default configuration:
 
-### WebSocket API
-
-Nodes connect to the WebSocket server and send/receive messages in JSON format:
-
-#### Node Stats Update
-```json
-{
-  "type": "stats",
-  "node_id": "node-123",
-  "cpu": 25.5,
-  "mem": 40.2
-}
+```bash
+cargo run
 ```
 
-#### Availability Update
-```json
-{
-  "type": "availability_update",
-  "node_id": "node-123",
-  "cpu_available": 3.5,
-  "mem_available": 2048,
-  "status": "ready",
-  "reliability_score": 0.98
-}
+This will use the default API URL (`http://localhost:8000`) and start the WebSocket server on port 3030.
+
+## Docker
+
+You can also run the server using Docker:
+
+```bash
+docker build -t lumaris-node-ws .
+docker run -p 3030:3030 -e API_URL=https://api.yourdomain.com lumaris-node-ws
 ```
-
-#### Job Status Update
-```json
-{
-  "type": "job_status",
-  "job_id": 12345,
-  "status": "running"
-}
-```
-
-### REST API
-
-#### Submit Job
-- `POST /jobs`
-```json
-{
-  "command": "process_data",
-  "args": ["--input", "file.csv"],
-  "input_data": "optional raw data",
-  "env_vars": {
-    "DEBUG": "true"
-  },
-  "priority": 2,
-  "user_id": "user-456"
-}
-```
-
-#### Get Job Status
-- `GET /jobs/{job_id}`
-
-#### List All Jobs
-- `GET /jobs`
-
-#### Cancel Job
-- `POST /jobs/{job_id}/cancel`
-
-#### Health Check
-- `GET /health`
-
-## Architecture
-
-The WebSocket server integrates with the matchmaker and job scheduler to:
-1. Track node availability and capabilities
-2. Match jobs to suitable nodes
-3. Dispatch jobs to nodes
-4. Monitor job execution status
-5. Report results back to clients
-
-## Error Handling
-
-The server uses a custom error type system for consistent error handling across components.
 

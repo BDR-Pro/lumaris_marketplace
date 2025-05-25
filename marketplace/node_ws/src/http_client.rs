@@ -139,7 +139,7 @@ pub async fn update_job_status(
         {
             Ok(response) => {
                 // Parse the response body as JSON
-                let body = match response.into_string() {
+                let body = match response.text() {
                     Ok(text) => text,
                     Err(e) => return Err(NodeError::ApiError(e.to_string())),
                 };

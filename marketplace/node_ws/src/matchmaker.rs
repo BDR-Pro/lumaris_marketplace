@@ -274,8 +274,10 @@ impl MatchMaker {
 pub type SharedMatchMaker = Arc<Mutex<MatchMaker>>;
 
 // Helper function to create a new shared matchmaker
-pub fn create_matchmaker() -> (SharedMatchMaker, broadcast::Receiver<MatchmakerMessage>) {
+pub fn create_matchmaker() -> (SharedMatchMaker, broadcast::Receiver<String>) {
     let (tx, rx) = broadcast::channel(100);
-    let matchmaker = Arc::new(Mutex::new(MatchMaker::new(tx)));
-    (matchmaker, rx)
+    let matchmaker = MatchMaker::new(tx);
+    let shared_matchmaker = Arc::new(Mutex::new(matchmaker));
+    
+    (shared_matchmaker, rx)
 }

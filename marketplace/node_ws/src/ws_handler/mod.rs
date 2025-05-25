@@ -9,6 +9,7 @@ use uuid::Uuid;
 use chrono::Utc;
 use log::{info, error, debug};
 use serde_json::{json, Value};
+use colored::*;
 
 use crate::api_client::{
     update_node_availability,
@@ -26,6 +27,11 @@ use crate::vm_manager::{
     VmStatus
 };
 
+use crate::buyer_stats::{
+    BuyerStatsManager,
+    format_buyer_stats
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -40,14 +46,15 @@ pub async fn run_ws_server(
     addr: &str,
     api_url: &str,
     matchmaker: SharedMatchMaker,
-    connections: &NodeConnections
+    connections: &NodeConnections,
+    buyer_stats_manager: BuyerStatsManager
 ) -> Result<()> {
     // Create the VM manager
     let vm_base_path = std::env::var("VM_BASE_PATH").unwrap_or_else(|_| "/tmp/lumaris/vms".to_string());
     let vm_manager = VmManager::new(&vm_base_path, api_url);
     
     // Create the WebSocket handler
-    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone(), vm_manager);
+    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone(), vm_manager, buyer_stats_manager);
     
     // Create a health check route
     let health_route = warp::path("health")
@@ -72,7 +79,8 @@ async fn handle_websocket_connection(
     matchmaker: SharedMatchMaker,
     _rx: broadcast::Receiver<String>,
     connections: NodeConnections,
-    vm_manager: VmManager
+    vm_manager: VmManager,
+    buyer_stats_manager: BuyerStatsManager
 ) {
     // Split the WebSocket into a sender and receiver
     let (mut ws_sender, mut ws_receiver) = ws.split();
@@ -100,6 +108,7 @@ async fn handle_websocket_connection(
     let ws_sender_tx_clone = ws_sender_tx.clone();
     let api_url_clone = api_url.clone();
     let vm_manager_clone = vm_manager.clone();
+    let buyer_stats_manager_clone = buyer_stats_manager.clone();
     
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
@@ -116,6 +125,7 @@ async fn handle_websocket_connection(
         let ws_sender_tx = ws_sender_tx_clone.clone();
         let api_url_clone = api_url_clone.clone();
         let vm_manager_clone = vm_manager_clone.clone();
+        let buyer_stats_manager_clone = buyer_stats_manager_clone.clone();
         async move {
             while let Some(result) = ws_receiver.next().await {
                 match result {
@@ -136,7 +146,8 @@ async fn handle_websocket_connection(
                             &matchmaker_clone, 
                             &connections_clone, 
                             &ws_sender_tx,
-                            &vm_manager_clone
+                            &vm_manager_clone,
+                            &buyer_stats_manager_clone
                         ).await {
                             error!("Error processing message: {}", e);
                             
@@ -198,7 +209,8 @@ pub async fn process_message(
     matchmaker: &SharedMatchMaker,
     connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>,
-    vm_manager: &VmManager
+    vm_manager: &VmManager,
+    buyer_stats_manager: &BuyerStatsManager
 ) -> WsResult<()> {
     // Parse the message as JSON
     let parsed: Value = serde_json::from_str(message)?;
@@ -315,12 +327,15 @@ pub async fn process_message(
                     parsed.get("vcpu_count").and_then(|v| v.as_u64()).map(|v| v as u32),
                     parsed.get("mem_size_mib").and_then(|m| m.as_u64()).map(|m| m as u32)
                 ) {
-                    info!("Creating VM for job {} (buyer: {})", job_id, buyer_id);
+                    info!("{} {} {}", "Creating VM for job".green(), job_id.to_string().bright_yellow(), format!("(buyer: {})", buyer_id).bright_cyan());
                     
                     // Create VM
                     match vm_manager.create_vm(job_id, buyer_id, vcpu_count, mem_size_mib).await {
                         Ok(vm_id) => {
-                            info!("VM created: {}", vm_id);
+                            info!("{} {}", "VM created:".green(), vm_id.bright_yellow());
+                            
+                            // Record VM creation in buyer stats
+                            buyer_stats_manager.record_vm_creation(&vm_id, job_id, buyer_id, vcpu_count, mem_size_mib).await;
                             
                             // Send VM creation confirmation
                             let response = json!({
@@ -366,12 +381,12 @@ pub async fn process_message(
             "stop_vm" => {
                 // Extract VM ID
                 if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
-                    info!("Stopping VM: {}", vm_id);
+                    info!("{} {}", "Stopping VM:".yellow(), vm_id.bright_yellow());
                     
                     // Stop VM
                     match vm_manager.stop_vm(vm_id).await {
                         Ok(_) => {
-                            info!("VM stopped: {}", vm_id);
+                            info!("{} {}", "VM stopped:".yellow(), vm_id.bright_yellow());
                             
                             // Send VM stop confirmation
                             let response = json!({
@@ -414,12 +429,21 @@ pub async fn process_message(
             "terminate_vm" => {
                 // Extract VM ID
                 if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
-                    info!("Terminating VM: {}", vm_id);
+                    info!("{} {}", "Terminating VM:".yellow(), vm_id.bright_yellow());
+                    
+                    // Get VM info for buyer ID
+                    let buyer_id = match vm_manager.get_vm(vm_id).await {
+                        Ok(vm) => vm.config.buyer_id,
+                        Err(_) => "unknown".to_string(),
+                    };
                     
                     // Terminate VM
                     match vm_manager.terminate_vm(vm_id).await {
                         Ok(_) => {
-                            info!("VM terminated: {}", vm_id);
+                            info!("{} {}", "VM terminated:".yellow(), vm_id.bright_yellow());
+                            
+                            // Record VM termination in buyer stats
+                            buyer_stats_manager.record_vm_termination(vm_id, &buyer_id).await;
                             
                             // Send VM termination confirmation
                             let response = json!({
@@ -462,12 +486,12 @@ pub async fn process_message(
             "get_vm_status" => {
                 // Extract VM ID
                 if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
-                    info!("Getting VM status: {}", vm_id);
+                    info!("{} {}", "Getting VM status:".cyan(), vm_id.bright_cyan());
                     
                     // Get VM status
                     match vm_manager.get_vm(vm_id).await {
                         Ok(vm) => {
-                            info!("VM status: {:?}", vm.status);
+                            info!("{} {}", "VM status:".cyan(), vm.status);
                             
                             // Send VM status
                             let response = json!({
@@ -516,7 +540,7 @@ pub async fn process_message(
             "get_buyer_vms" => {
                 // Extract buyer ID
                 if let Some(buyer_id) = parsed.get("buyer_id").and_then(|b| b.as_str()) {
-                    info!("Getting VMs for buyer: {}", buyer_id);
+                    info!("{} {}", "Getting VMs for buyer:".cyan(), buyer_id.bright_cyan());
                     
                     // Get buyer VMs
                     let vms = vm_manager.get_vms_by_buyer(buyer_id).await;
@@ -549,6 +573,67 @@ pub async fn process_message(
                     let error_response = json!({
                         "type": "error",
                         "message": "Missing buyer ID for buyer VMs"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "get_buyer_stats" => {
+                // Extract buyer ID
+                if let Some(buyer_id) = parsed.get("buyer_id").and_then(|b| b.as_str()) {
+                    info!("{} {}", "Getting stats for buyer:".cyan(), buyer_id.bright_cyan());
+                    
+                    // Get buyer stats
+                    match buyer_stats_manager.get_buyer_stats(buyer_id).await {
+                        Some(stats) => {
+                            // Format buyer stats
+                            let formatted_stats = format_buyer_stats(&stats);
+                            
+                            // Send buyer stats
+                            let response = json!({
+                                "type": "buyer_stats",
+                                "buyer_id": buyer_id,
+                                "stats": {
+                                    "session_start": stats.session_start.to_rfc3339(),
+                                    "active_vms": stats.active_vms,
+                                    "total_vms_spawned": stats.total_vms_spawned,
+                                    "total_earnings": stats.total_earnings,
+                                    "countries": stats.countries,
+                                    "formatted_stats": formatted_stats
+                                }
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending buyer stats: {}", e);
+                            }
+                        },
+                        None => {
+                            // Send empty stats
+                            let response = json!({
+                                "type": "buyer_stats",
+                                "buyer_id": buyer_id,
+                                "stats": {
+                                    "session_start": Utc::now().to_rfc3339(),
+                                    "active_vms": 0,
+                                    "total_vms_spawned": 0,
+                                    "total_earnings": 0.0,
+                                    "countries": {},
+                                    "formatted_stats": format!("No stats available for buyer {}", buyer_id)
+                                }
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending empty buyer stats: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing buyer ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing buyer ID for buyer stats"
                     }).to_string();
                     
                     if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
@@ -594,7 +679,8 @@ pub fn create_ws_handler(
     api_url: &str,
     matchmaker: SharedMatchMaker,
     connections: NodeConnections,
-    vm_manager: VmManager
+    vm_manager: VmManager,
+    buyer_stats_manager: BuyerStatsManager
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a broadcast channel for sending messages to all connected clients
     let (tx, _rx) = broadcast::channel::<String>(100);
@@ -610,7 +696,8 @@ pub fn create_ws_handler(
         .and(with_broadcaster(tx.clone()))
         .and(with_connections(connections))
         .and(with_vm_manager(vm_manager))
-        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections, vm_manager: VmManager| {
+        .and(with_buyer_stats_manager(buyer_stats_manager))
+        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections, vm_manager: VmManager, buyer_stats_manager: BuyerStatsManager| {
             // Clone tx for the closure
             let tx_clone = tx.clone();
             
@@ -621,7 +708,7 @@ pub fn create_ws_handler(
                 // Handle the WebSocket connection
                 // Return a future that resolves to ()
                 async move {
-                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections, vm_manager).await;
+                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections, vm_manager, buyer_stats_manager).await;
                 }
             })
         })
@@ -652,3 +739,7 @@ fn with_vm_manager(vm_manager: VmManager) -> impl Filter<Extract = (VmManager,),
     warp::any().map(move || vm_manager.clone())
 }
 
+// Helper function to pass the buyer stats manager to the handler
+fn with_buyer_stats_manager(buyer_stats_manager: BuyerStatsManager) -> impl Filter<Extract = (BuyerStatsManager,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || buyer_stats_manager.clone())
+}

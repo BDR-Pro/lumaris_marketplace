@@ -1,0 +1,259 @@
+{% extends 'marketplace_monitor/base.html' %}
+
+{% block content %}
+<div class="row">
+    <!-- Node Info Card -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-server"></i> Node Information
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>Node ID:</strong> {{ node.node_id }}
+                </div>
+                <div class="mb-3">
+                    <strong>Hostname:</strong> {{ node.hostname }}
+                </div>
+                <div class="mb-3">
+                    <strong>IP Address:</strong> {{ node.ip_address|default:"N/A" }}
+                </div>
+                <div class="mb-3">
+                    <strong>Status:</strong>
+                    <span class="status-badge {% if node.status == 'online' %}status-online{% else %}status-offline{% endif %}">
+                        {{ node.status }}
+                    </span>
+                </div>
+                <div class="mb-3">
+                    <strong>CPU Cores:</strong> {{ node.cpu_cores }}
+                </div>
+                <div class="mb-3">
+                    <strong>Memory:</strong> {{ node.memory_mb }} MB
+                </div>
+                <div class="mb-3">
+                    <strong>Last Seen:</strong> {{ node.last_seen|date:"M d, Y H:i:s" }}
+                </div>
+                <div class="mb-3">
+                    <strong>Created:</strong> {{ node.created_at|date:"M d, Y H:i:s" }}
+                </div>
+                <div class="mb-3">
+                    <strong>Updated:</strong> {{ node.updated_at|date:"M d, Y H:i:s" }}
+                </div>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-primary" id="updateNodeButton">
+                        <i class="fas fa-edit"></i> Update Node
+                    </button>
+                    <button class="btn btn-danger" id="deleteNodeButton">
+                        <i class="fas fa-trash"></i> Delete Node
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Node Metrics -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-line"></i> Node Metrics
+            </div>
+            <div class="card-body">
+                <ul class="nav nav-tabs" id="nodeMetricsTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="cpu-tab" data-bs-toggle="tab" data-bs-target="#cpu" type="button" role="tab" aria-controls="cpu" aria-selected="true">CPU Usage</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="memory-tab" data-bs-toggle="tab" data-bs-target="#memory" type="button" role="tab" aria-controls="memory" aria-selected="false">Memory Usage</button>
+                    </li>
+                </ul>
+                <div class="tab-content p-3" id="nodeMetricsTabContent">
+                    <div class="tab-pane fade show active" id="cpu" role="tabpanel" aria-labelledby="cpu-tab">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                    <div class="tab-pane fade" id="memory" role="tabpanel" aria-labelledby="memory-tab">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Node VMs -->
+    <div class="col-md-12 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-desktop"></i> Virtual Machines on this Node
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>VM ID</th>
+                                <th>Buyer</th>
+                                <th>Status</th>
+                                <th>vCPU</th>
+                                <th>Memory</th>
+                                <th>Created</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if vms %}
+                                {% for vm in vms %}
+                                <tr>
+                                    <td><a href="{% url 'marketplace_monitor:vm_detail' vm.vm_id %}">{{ vm.vm_id }}</a></td>
+                                    <td>{{ vm.buyer_id }}</td>
+                                    <td>
+                                        <span class="status-badge 
+                                            {% if vm.status == 'running' %}status-running
+                                            {% elif vm.status == 'stopped' %}status-stopped
+                                            {% elif vm.status == 'creating' %}status-creating
+                                            {% elif vm.status == 'terminated' %}status-terminated
+                                            {% endif %}">
+                                            {{ vm.status }}
+                                        </span>
+                                    </td>
+                                    <td>{{ vm.vcpu_count }}</td>
+                                    <td>{{ vm.memory_mb }} MB</td>
+                                    <td>{{ vm.created_at|date:"M d, Y H:i" }}</td>
+                                    <td>
+                                        <div class="btn-group" role="group">
+                                            <button type="button" class="btn btn-sm btn-primary">
+                                                <i class="fas fa-play"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-warning">
+                                                <i class="fas fa-stop"></i>
+                                            </button>
+                                            <button type="button" class="btn btn-sm btn-danger">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center">No VMs found on this node</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Fetch node metrics
+        fetch("{% url 'marketplace_monitor:api_node_detail' node.node_id %}")
+            .then(response => response.json())
+            .then(data => {
+                // Create CPU chart
+                const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+                const cpuChart = new Chart(cpuCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.cpu_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'CPU Usage (%)',
+                            data: data.cpu_metrics.map(item => item.value),
+                            borderColor: '#3498db',
+                            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'CPU Usage Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100
+                            }
+                        }
+                    }
+                });
+                
+                // Create memory chart
+                const memoryCtx = document.getElementById('memoryChart').getContext('2d');
+                const memoryChart = new Chart(memoryCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.memory_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'Memory Usage (MB)',
+                            data: data.memory_metrics.map(item => item.value),
+                            borderColor: '#2ecc71',
+                            backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Memory Usage Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching node metrics:', error);
+            });
+        
+        // Update node button click handler
+        const updateNodeButton = document.getElementById('updateNodeButton');
+        if (updateNodeButton) {
+            updateNodeButton.addEventListener('click', function() {
+                // Implement update node functionality
+                alert('Update node functionality will be implemented here.');
+            });
+        }
+        
+        // Delete node button click handler
+        const deleteNodeButton = document.getElementById('deleteNodeButton');
+        if (deleteNodeButton) {
+            deleteNodeButton.addEventListener('click', function() {
+                if (confirm('Are you sure you want to delete this node? This action cannot be undone.')) {
+                    // Implement delete node functionality
+                    alert('Delete node functionality will be implemented here.');
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}
+

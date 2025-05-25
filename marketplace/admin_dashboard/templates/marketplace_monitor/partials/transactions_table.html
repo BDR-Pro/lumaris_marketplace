@@ -1,0 +1,26 @@
+{% if transactions %}
+    {% for transaction in transactions %}
+    <tr>
+        <td>{{ transaction.transaction_id }}</td>
+        <td>{{ transaction.user_id }}</td>
+        <td>{{ transaction.user_type }}</td>
+        <td>
+            <span class="badge {% if transaction.transaction_type == 'payment' %}bg-danger{% elif transaction.transaction_type == 'refund' %}bg-warning{% elif transaction.transaction_type == 'deposit' %}bg-success{% else %}bg-info{% endif %}">
+                {{ transaction.transaction_type }}
+            </span>
+        </td>
+        <td>${{ transaction.amount }}</td>
+        <td>
+            <span class="badge {% if transaction.status == 'completed' %}bg-success{% elif transaction.status == 'pending' %}bg-warning{% else %}bg-danger{% endif %}">
+                {{ transaction.status }}
+            </span>
+        </td>
+        <td>{{ transaction.created_at|date:"M d, Y H:i" }}</td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="7" class="text-center">No transactions found</td>
+    </tr>
+{% endif %}
+

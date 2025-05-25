@@ -14,6 +14,10 @@ use thiserror::Error;
 
 use crate::api_client::UserRole;
 
+// Include tests
+#[cfg(test)]
+mod tests;
+
 // WebSocket error types
 #[derive(Error, Debug)]
 pub enum WsError {
@@ -504,4 +508,3 @@ impl LumarisWsClient {
         )
     }
 }
-

@@ -25,6 +25,7 @@ chrono = "0.4"
 uuid = { version = "1.4", features = ["v4"] }
 dotenv = "0.15"
 rand = "0.8"
+colored = "2.1.0"  # For colored console output
 
 [dev-dependencies]
 tempfile = "3.8"

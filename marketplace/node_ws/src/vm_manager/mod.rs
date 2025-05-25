@@ -9,6 +9,7 @@ use log::{info, error, debug};
 use serde::{Serialize, Deserialize};
 use serde_json::{json, Value};
 use thiserror::Error;
+use colored::*;
 
 #[cfg(test)]
 mod tests;
@@ -88,7 +89,7 @@ impl VmManager {
         // Create VM directory if it doesn't exist
         if !vm_base_path.exists() {
             fs::create_dir_all(&vm_base_path).unwrap_or_else(|e| {
-                error!("Failed to create VM directory: {}", e);
+                error!("{} {}", "Failed to create VM directory:".red().bold(), e);
             });
         }
         
@@ -149,7 +150,7 @@ impl VmManager {
         let vm_manager = self.clone();
         tokio::spawn(async move {
             if let Err(e) = vm_manager.start_vm(&config).await {
-                error!("Failed to start VM {}: {}", vm_id, e);
+                error!("{} {} {}", "Failed to start VM".red().bold(), vm_id.yellow(), e);
                 vm_manager.update_vm_status(&vm_id, VmStatus::Failed, Some(e.to_string())).await;
             } else {
                 vm_manager.update_vm_status(&vm_id, VmStatus::Running, None).await;
@@ -166,7 +167,7 @@ impl VmManager {
         
         // Check if kernel already exists
         if !kernel_path.exists() {
-            debug!("Downloading kernel image to {}", kernel_path.display());
+            debug!("{} {}", "Downloading kernel image to".cyan(), kernel_path.display().to_string().bright_white());
             
             // In a real implementation, download the kernel
             // For now, just create a dummy file
@@ -176,7 +177,7 @@ impl VmManager {
         
         // Check if rootfs already exists
         if !rootfs_path.exists() {
-            debug!("Downloading rootfs image to {}", rootfs_path.display());
+            debug!("{} {}", "Downloading rootfs image to".cyan(), rootfs_path.display().to_string().bright_white());
             
             // In a real implementation, download the rootfs
             // For now, just create a dummy file
@@ -227,7 +228,7 @@ impl VmManager {
         }
         
         // Start Firecracker process
-        info!("Starting Firecracker VM {}", config.vm_id);
+        info!("{} {}", "Starting Firecracker VM".green(), config.vm_id.bright_yellow());
         
         // In a real implementation, we would use the Firecracker API to start the VM
         // For now, we'll just simulate it with a command
@@ -237,7 +238,7 @@ impl VmManager {
         
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
-            error!("Failed to start Firecracker VM: {}", error_msg);
+            error!("{} {}", "Failed to start Firecracker VM:".red().bold(), error_msg);
             return Err(VmError::StartError(error_msg));
         }
         
@@ -248,7 +249,7 @@ impl VmManager {
         // Update VM with IP address
         self.update_vm_ip(&config.vm_id, &ip_address).await;
         
-        info!("Firecracker VM {} started with IP {}", config.vm_id, ip_address);
+        info!("{} {} {} {}", "Firecracker VM".green(), config.vm_id.bright_yellow(), "started with IP".green(), ip_address.bright_white());
         
         Ok(())
     }
@@ -263,7 +264,7 @@ impl VmManager {
             return Ok(());
         }
         
-        info!("Stopping Firecracker VM {}", vm_id);
+        info!("{} {}", "Stopping Firecracker VM".yellow(), vm_id.bright_yellow());
         
         // In a real implementation, we would use the Firecracker API to stop the VM
         // For now, we'll just simulate it
@@ -273,14 +274,14 @@ impl VmManager {
         
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
-            error!("Failed to stop Firecracker VM: {}", error_msg);
+            error!("{} {}", "Failed to stop Firecracker VM:".red().bold(), error_msg);
             return Err(VmError::StopError(error_msg));
         }
         
         // Update VM status
         self.update_vm_status(vm_id, VmStatus::Stopped, None).await;
         
-        info!("Firecracker VM {} stopped", vm_id);
+        info!("{} {}", "Firecracker VM".yellow(), vm_id.bright_yellow().strikethrough());
         
         Ok(())
     }
@@ -293,7 +294,7 @@ impl VmManager {
         // Find VM
         let vm = self.get_vm(vm_id).await?;
         
-        info!("Terminating Firecracker VM {}", vm_id);
+        info!("{} {}", "Terminating Firecracker VM".red(), vm_id.bright_yellow());
         
         // Clean up VM files
         let vm_dir = self.vm_base_path.join(vm_id);
@@ -304,7 +305,7 @@ impl VmManager {
         // Update VM status
         self.update_vm_status(vm_id, VmStatus::Terminated, None).await;
         
-        info!("Firecracker VM {} terminated", vm_id);
+        info!("{} {}", "Firecracker VM".red(), vm_id.bright_yellow().strikethrough());
         
         Ok(())
     }
@@ -363,7 +364,7 @@ impl VmManager {
                 let api_url = self.api_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) = update_vm_status_in_api(&api_url, &vm_clone).await {
-                        error!("Failed to update VM status in API: {}", e);
+                        error!("{} {}", "Failed to update VM status in API:".red().bold(), e);
                     }
                 });
                 
@@ -386,7 +387,7 @@ impl VmManager {
                 let api_url = self.api_url.clone();
                 tokio::spawn(async move {
                     if let Err(e) = update_vm_status_in_api(&api_url, &vm_clone).await {
-                        error!("Failed to update VM IP in API: {}", e);
+                        error!("{} {}", "Failed to update VM IP in API:".red().bold(), e);
                     }
                 });
                 

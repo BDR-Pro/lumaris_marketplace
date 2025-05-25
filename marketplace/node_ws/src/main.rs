@@ -11,6 +11,7 @@ use tokio::time::sleep;
 use tokio::sync::Mutex;
 use std::sync::Arc;
 use std::collections::HashMap;
+use colored::*;
 
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
@@ -24,58 +25,65 @@ async fn main() {
     // Initialize logger
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     
-    // Print banner
-    info!("
+    // Print banner with colored output
+    println!("{}", "
     ██╗     ██╗   ██╗███╗   ███╗ █████╗ ██████╗ ██╗███████╗
     ██║     ██║   ██║████╗ ████║██╔══██╗██╔══██╗██║██╔════╝
     ██║     ██║   ██║██╔████╔██║███████║██████╔╝██║███████╗
     ██║     ██║   ██║██║╚██╔╝██║██╔══██║██╔══██╗██║╚════██║
     ███████╗╚██████╔╝██║ ╚═╝ ██║██║  ██║██║  ██║██║███████║
     ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚══════╝
+    ".bright_blue());
     
-    Node WebSocket Server
-    ");
+    println!("{}", "    Node WebSocket Server".bright_green().bold());
+    println!("{}", "    =====================".bright_green());
     
     // Get API URL from environment variables
     // #ignore-devskim: DS137138 - This is a fallback for local development only
     let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
-    info!("API URL: {}", api_url);
+    info!("{} {}", "API URL:".bright_yellow(), api_url.bright_white());
     
     // Get VM base path from environment variables
     let vm_base_path = env::var("VM_BASE_PATH").unwrap_or_else(|_| "/tmp/lumaris/vms".to_string());
-    info!("VM Base Path: {}", vm_base_path);
+    info!("{} {}", "VM Base Path:".bright_yellow(), vm_base_path.bright_white());
     
     // Create the matchmaker
     let matchmaker = create_matchmaker();
+    info!("{}", "✓ Matchmaker initialized".green());
     
     // Create the VM manager
     let vm_manager = VmManager::new(&vm_base_path, &api_url);
-    info!("VM Manager initialized");
+    info!("{}", "✓ VM Manager initialized".green());
     
     // Wait for API to be ready
-    info!("Waiting for API to be ready...");
+    info!("{}", "Waiting for API to be ready...".bright_cyan());
     let mut api_ready = false;
-    for _ in 0..30 {
+    for i in 0..30 {
         match reqwest::get(&format!("{}/health", api_url)).await {
             Ok(response) if response.status().is_success() => {
                 api_ready = true;
+                info!("{}", "✓ API is ready!".green().bold());
                 break;
             },
             _ => {
+                print!("{}", ".".bright_cyan());
+                if i % 10 == 9 {
+                    println!();
+                }
                 sleep(Duration::from_secs(1)).await;
             }
         }
     }
     
     if !api_ready {
-        error!("API not ready after 30 seconds, continuing anyway...");
+        error!("{}", "⚠ API not ready after 30 seconds, continuing anyway...".red().bold());
     }
     
     // Start WebSocket server for node connections
-    info!("🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...");
+    info!("{}", "🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...".bright_green().bold());
     let connections: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::new(Mutex::new(HashMap::new()));
     if let Err(e) = run_ws_server("0.0.0.0:3030", &api_url, matchmaker.clone(), &connections).await {
-        error!("WebSocket server error: {}", e);
+        error!("{} {}", "WebSocket server error:".red().bold(), e);
     }
 }
 

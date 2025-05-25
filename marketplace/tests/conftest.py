@@ -1,45 +1,55 @@
-"""Pytest configuration for Admin API tests using an in-memory SQLite DB."""
-
-# Standard library
-from unittest.mock import patch
-
-# Third-party packages
+import os
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
-# Internal application imports
-from admin_api.database import get_db
-from admin_api.models import Base
-from admin_api.main import create_app
+from marketplace.admin_api.database import Base, get_db
+from marketplace.admin_api.main import app
 
+# Use in-memory SQLite for testing
+TEST_DATABASE_URL = "sqlite:///:memory:"
 
-@pytest.fixture()
-def client():
-    """Provides a TestClient with an in-memory database for isolated testing."""
-    test_engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False}
+@pytest.fixture(scope="function")
+def test_db():
+    # Create the test database engine
+    engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
-    connection = test_engine.connect()
-    transaction = connection.begin()
+    
+    # Create all tables in the database
+    Base.metadata.create_all(bind=engine)
+    
+    # Create a session factory
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    
+    # Create a test database session
+    db = TestingSessionLocal()
+    
+    try:
+        yield db
+    finally:
+        db.close()
+        # Drop all tables after the test
+        Base.metadata.drop_all(bind=engine)
 
-    test_session = sessionmaker(bind=connection)
-    Base.metadata.create_all(bind=connection)
-
+@pytest.fixture(scope="function")
+def client(test_db):
+    # Override the get_db dependency to use the test database
     def override_get_db():
-        db = test_session()
         try:
-            yield db
+            yield test_db
         finally:
-            db.close()
-
-    app = create_app()
+            pass
+    
     app.dependency_overrides[get_db] = override_get_db
-    test_client = TestClient(app)
+    
+    from fastapi.testclient import TestClient
+    with TestClient(app) as client:
+        yield client
+    
+    # Remove the override after the test
+    app.dependency_overrides = {}
 
-    yield test_client
-
-    transaction.rollback()
-    connection.close()

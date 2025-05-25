@@ -21,6 +21,11 @@ use crate::matchmaker::{
     JobStatus
 };
 
+use crate::vm_manager::{
+    VmManager,
+    VmStatus
+};
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -34,8 +39,12 @@ pub async fn run_ws_server(
     matchmaker: SharedMatchMaker,
     connections: &NodeConnections
 ) -> Result<()> {
+    // Create the VM manager
+    let vm_base_path = std::env::var("VM_BASE_PATH").unwrap_or_else(|_| "/tmp/lumaris/vms".to_string());
+    let vm_manager = VmManager::new(&vm_base_path, api_url);
+    
     // Create the WebSocket handler
-    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone());
+    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone(), vm_manager);
     
     // Create a health check route
     let health_route = warp::path("health")
@@ -59,7 +68,8 @@ async fn handle_websocket_connection(
     api_url: String,
     matchmaker: SharedMatchMaker,
     _rx: broadcast::Receiver<String>,
-    connections: NodeConnections
+    connections: NodeConnections,
+    vm_manager: VmManager
 ) {
     // Split the WebSocket into a sender and receiver
     let (mut ws_sender, mut ws_receiver) = ws.split();
@@ -86,6 +96,7 @@ async fn handle_websocket_connection(
     let connections_clone = connections.clone();
     let ws_sender_tx_clone = ws_sender_tx.clone();
     let api_url_clone = api_url.clone();
+    let vm_manager_clone = vm_manager.clone();
     
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
@@ -101,6 +112,7 @@ async fn handle_websocket_connection(
     let message_handler = tokio::spawn({
         let ws_sender_tx = ws_sender_tx_clone.clone();
         let api_url_clone = api_url_clone.clone();
+        let vm_manager_clone = vm_manager_clone.clone();
         async move {
             while let Some(result) = ws_receiver.next().await {
                 match result {
@@ -114,7 +126,15 @@ async fn handle_websocket_connection(
                         let msg_text = msg.to_str().unwrap_or_default();
                         
                         // Process the message
-                        if let Err(e) = process_message(msg_text, &peer_id_clone, &api_url_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
+                        if let Err(e) = process_message(
+                            msg_text, 
+                            &peer_id_clone, 
+                            &api_url_clone, 
+                            &matchmaker_clone, 
+                            &connections_clone, 
+                            &ws_sender_tx,
+                            &vm_manager_clone
+                        ).await {
                             error!("Error processing message: {}", e);
                             
                             // Send error response
@@ -174,7 +194,8 @@ async fn process_message(
     api_url: &str,
     matchmaker: &SharedMatchMaker,
     connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
-    ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>
+    ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>,
+    vm_manager: &VmManager
 ) -> WsResult<()> {
     // Parse the message as JSON
     let parsed: Value = serde_json::from_str(message)?;
@@ -283,6 +304,255 @@ async fn process_message(
                     handle_job_status_update(job_id, status_str, connections).await?;
                 }
             },
+            "create_vm" => {
+                // Extract VM creation parameters
+                if let (Some(job_id), Some(buyer_id), Some(vcpu_count), Some(mem_size_mib)) = (
+                    parsed.get("job_id").and_then(|j| j.as_u64()),
+                    parsed.get("buyer_id").and_then(|b| b.as_str()),
+                    parsed.get("vcpu_count").and_then(|v| v.as_u64()).map(|v| v as u32),
+                    parsed.get("mem_size_mib").and_then(|m| m.as_u64()).map(|m| m as u32)
+                ) {
+                    info!("Creating VM for job {} (buyer: {})", job_id, buyer_id);
+                    
+                    // Create VM
+                    match vm_manager.create_vm(job_id, buyer_id, vcpu_count, mem_size_mib).await {
+                        Ok(vm_id) => {
+                            info!("VM created: {}", vm_id);
+                            
+                            // Send VM creation confirmation
+                            let response = json!({
+                                "type": "vm_created",
+                                "job_id": job_id,
+                                "buyer_id": buyer_id,
+                                "vm_id": vm_id,
+                                "status": "creating"
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending VM creation confirmation: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to create VM: {}", e);
+                            
+                            // Send error response
+                            let error_response = json!({
+                                "type": "vm_creation_failed",
+                                "job_id": job_id,
+                                "buyer_id": buyer_id,
+                                "error": format!("Failed to create VM: {}", e)
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                                error!("Error sending VM creation error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing parameters
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing required parameters for VM creation"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "stop_vm" => {
+                // Extract VM ID
+                if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
+                    info!("Stopping VM: {}", vm_id);
+                    
+                    // Stop VM
+                    match vm_manager.stop_vm(vm_id).await {
+                        Ok(_) => {
+                            info!("VM stopped: {}", vm_id);
+                            
+                            // Send VM stop confirmation
+                            let response = json!({
+                                "type": "vm_stopped",
+                                "vm_id": vm_id,
+                                "status": "stopped"
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending VM stop confirmation: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to stop VM: {}", e);
+                            
+                            // Send error response
+                            let error_response = json!({
+                                "type": "vm_stop_failed",
+                                "vm_id": vm_id,
+                                "error": format!("Failed to stop VM: {}", e)
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                                error!("Error sending VM stop error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing VM ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing VM ID for VM stop"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "terminate_vm" => {
+                // Extract VM ID
+                if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
+                    info!("Terminating VM: {}", vm_id);
+                    
+                    // Terminate VM
+                    match vm_manager.terminate_vm(vm_id).await {
+                        Ok(_) => {
+                            info!("VM terminated: {}", vm_id);
+                            
+                            // Send VM termination confirmation
+                            let response = json!({
+                                "type": "vm_terminated",
+                                "vm_id": vm_id,
+                                "status": "terminated"
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending VM termination confirmation: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to terminate VM: {}", e);
+                            
+                            // Send error response
+                            let error_response = json!({
+                                "type": "vm_termination_failed",
+                                "vm_id": vm_id,
+                                "error": format!("Failed to terminate VM: {}", e)
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                                error!("Error sending VM termination error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing VM ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing VM ID for VM termination"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "get_vm_status" => {
+                // Extract VM ID
+                if let Some(vm_id) = parsed.get("vm_id").and_then(|v| v.as_str()) {
+                    info!("Getting VM status: {}", vm_id);
+                    
+                    // Get VM status
+                    match vm_manager.get_vm(vm_id).await {
+                        Ok(vm) => {
+                            info!("VM status: {:?}", vm.status);
+                            
+                            // Send VM status
+                            let response = json!({
+                                "type": "vm_status",
+                                "vm_id": vm_id,
+                                "job_id": vm.config.job_id,
+                                "buyer_id": vm.config.buyer_id,
+                                "status": format!("{:?}", vm.status),
+                                "ip_address": vm.ip_address,
+                                "created_at": vm.created_at,
+                                "updated_at": vm.updated_at,
+                                "error_message": vm.error_message
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending VM status: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to get VM status: {}", e);
+                            
+                            // Send error response
+                            let error_response = json!({
+                                "type": "vm_status_failed",
+                                "vm_id": vm_id,
+                                "error": format!("Failed to get VM status: {}", e)
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                                error!("Error sending VM status error: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing VM ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing VM ID for VM status"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "get_buyer_vms" => {
+                // Extract buyer ID
+                if let Some(buyer_id) = parsed.get("buyer_id").and_then(|b| b.as_str()) {
+                    info!("Getting VMs for buyer: {}", buyer_id);
+                    
+                    // Get buyer VMs
+                    let vms = vm_manager.get_vms_by_buyer(buyer_id).await;
+                    
+                    // Convert VMs to JSON
+                    let vm_list: Vec<Value> = vms.iter().map(|vm| {
+                        json!({
+                            "vm_id": vm.config.vm_id,
+                            "job_id": vm.config.job_id,
+                            "status": format!("{:?}", vm.status),
+                            "ip_address": vm.ip_address,
+                            "created_at": vm.created_at,
+                            "updated_at": vm.updated_at,
+                            "error_message": vm.error_message
+                        })
+                    }).collect();
+                    
+                    // Send VM list
+                    let response = json!({
+                        "type": "buyer_vms",
+                        "buyer_id": buyer_id,
+                        "vms": vm_list
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                        error!("Error sending buyer VMs: {}", e);
+                    }
+                } else {
+                    // Send error response for missing buyer ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing buyer ID for buyer VMs"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
             _ => {
                 info!("Unknown message type: {}", msg_type);
             }
@@ -320,7 +590,8 @@ async fn handle_job_status_update(
 pub fn create_ws_handler(
     api_url: &str,
     matchmaker: SharedMatchMaker,
-    connections: NodeConnections
+    connections: NodeConnections,
+    vm_manager: VmManager
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a broadcast channel for sending messages to all connected clients
     let (tx, _rx) = broadcast::channel::<String>(100);
@@ -335,7 +606,8 @@ pub fn create_ws_handler(
         .and(with_matchmaker(matchmaker))
         .and(with_broadcaster(tx.clone()))
         .and(with_connections(connections))
-        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
+        .and(with_vm_manager(vm_manager))
+        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections, vm_manager: VmManager| {
             // Clone tx for the closure
             let tx_clone = tx.clone();
             
@@ -346,7 +618,7 @@ pub fn create_ws_handler(
                 // Handle the WebSocket connection
                 // Return a future that resolves to ()
                 async move {
-                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections).await;
+                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections, vm_manager).await;
                 }
             })
         })
@@ -370,5 +642,10 @@ fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (bro
 // Helper function to pass the connections to the handler
 fn with_connections(connections: NodeConnections) -> impl Filter<Extract = (NodeConnections,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || connections.clone())
+}
+
+// Helper function to pass the VM manager to the handler
+fn with_vm_manager(vm_manager: VmManager) -> impl Filter<Extract = (VmManager,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || vm_manager.clone())
 }
 

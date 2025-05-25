@@ -1,6 +1,7 @@
 mod api_client;
 mod matchmaker;
 mod ws_handler;
+mod vm_manager;
 
 use log::{info, error};
 use dotenv::dotenv;
@@ -13,6 +14,7 @@ use std::collections::HashMap;
 
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
+use vm_manager::VmManager;
 
 #[tokio::main]
 async fn main() {
@@ -39,8 +41,16 @@ async fn main() {
     let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
     info!("API URL: {}", api_url);
     
+    // Get VM base path from environment variables
+    let vm_base_path = env::var("VM_BASE_PATH").unwrap_or_else(|_| "/tmp/lumaris/vms".to_string());
+    info!("VM Base Path: {}", vm_base_path);
+    
     // Create the matchmaker
     let matchmaker = create_matchmaker();
+    
+    // Create the VM manager
+    let vm_manager = VmManager::new(&vm_base_path, &api_url);
+    info!("VM Manager initialized");
     
     // Wait for API to be ready
     info!("Waiting for API to be ready...");

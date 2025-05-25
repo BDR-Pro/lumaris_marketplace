@@ -142,6 +142,7 @@ async fn handle_websocket_connection(
     let forward_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if let Err(e) = ws_sender_tx_clone.send(Message::text(msg.clone())) {
+
                 error!("Error sending message: {}", e);
                 break;
             }

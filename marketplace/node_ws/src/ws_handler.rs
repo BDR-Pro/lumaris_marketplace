@@ -323,7 +323,7 @@ pub fn create_ws_handler(
         .and(with_broadcaster(tx))
         .and(with_connections(connections))
         .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections| {
-            ws.on_upgrade(|socket| {
+            ws.on_upgrade(move |socket| {
                 // Create a new receiver for this connection
                 let rx = tx.subscribe();
                 
@@ -350,4 +350,3 @@ fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (bro
 fn with_connections(connections: NodeConnections) -> impl Filter<Extract = (NodeConnections,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || connections.clone())
 }
-

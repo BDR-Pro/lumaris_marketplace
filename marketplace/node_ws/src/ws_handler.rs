@@ -27,11 +27,15 @@ type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Syn
 type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
 
 // Start the WebSocket server
-pub async fn run_ws_server(matchmaker: SharedMatchMaker) -> Result<()> {
+pub async fn run_ws_server(
+    addr: &str,
+    matchmaker: SharedMatchMaker,
+    _connections: &NodeConnections
+) -> Result<(), Box<dyn std::error::Error>> {
     // Create the WebSocket handler
     let ws_route = create_ws_handler(matchmaker.clone());
     
-    // Create the health check route
+    // Create a health check route
     let health_route = warp::path("health")
         .map(|| "OK");
     
@@ -39,7 +43,7 @@ pub async fn run_ws_server(matchmaker: SharedMatchMaker) -> Result<()> {
     let routes = ws_route.or(health_route);
     
     // Start the server
-    info!("Starting WebSocket server on 0.0.0.0:3030");
+    info!("Starting WebSocket server on {}", addr);
     warp::serve(routes)
         .run(([0, 0, 0, 0], 3030))
         .await;
@@ -61,7 +65,7 @@ async fn handle_websocket_connection(
     info!("New WebSocket connection: {}", peer_id);
     
     // Create a channel for sending messages to this WebSocket
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     
     // Store the sender in the connections map
     let connections = Arc::new(Mutex::new(HashMap::new()));
@@ -154,7 +158,7 @@ async fn handle_websocket_connection(
                                                 json.get("status").and_then(|s| s.as_str())
                                             ) {
                                                 // Convert status string to enum
-                                                let status = match status_str {
+                                                let _status = match status_str {
                                                     "queued" => JobStatus::Queued,
                                                     "matching" => JobStatus::Matching,
                                                     "assigned" => JobStatus::Assigned,
@@ -206,8 +210,9 @@ async fn handle_websocket_connection(
     // Forward broadcast messages to this WebSocket
     tokio::task::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let text_msg: String = msg;
-            if let Err(e) = ws_tx.send(Message::text(text_msg)).await {
+
+            if let Err(e) = ws_tx.send(Message::text(msg.clone())).await {
+      
                 error!("Error sending message: {}", e);
                 break;
             }
@@ -257,7 +262,7 @@ async fn process_message(
                     parsed.get("status").and_then(|s| s.as_str())
                 ) {
                     // Convert status string to enum
-                    let status = match status_str {
+                    let _status = match status_str {
                         "queued" => JobStatus::Queued,
                         "matching" => JobStatus::Matching,
                         "assigned" => JobStatus::Assigned,

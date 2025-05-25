@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+import logging
+import secrets
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -25,10 +27,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key-for-development')
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    # Generate a random secret key if not provided
+    import secrets
+    SECRET_KEY = secrets.token_hex(32)
+    logger = logging.getLogger(__name__)
+    logger.warning("No SECRET_KEY environment variable set! Using a randomly generated key. This is not secure for production.")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -151,9 +159,29 @@ CRISPY_TEMPLATE_PACK = "bootstrap5"
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:8000,http://127.0.0.1:8000').split(',')
 
+# Security settings
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_BROWSER_XSS_FILTER = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_HSTS_SECONDS = 31536000  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+SECURE_HSTS_PRELOAD = True
+
+# Only enable these in production (when DEBUG is False)
+if not DEBUG:
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 # FastAPI Integration
 FASTAPI_URL = os.getenv('FASTAPI_URL', 'http://localhost:8000')
-API_KEY = os.getenv('API_KEY', 'super-secret')
+API_KEY = os.getenv('API_KEY')
+if not API_KEY:
+    # Generate a random API key if not provided
+    API_KEY = secrets.token_urlsafe(32)
+    logger = logging.getLogger(__name__)
+    logger.warning("No API_KEY environment variable set! Using a randomly generated key. This is not secure for production.")
 
 # WebSocket settings
 WS_URL = os.getenv('WS_URL', 'ws://localhost:3030/ws')

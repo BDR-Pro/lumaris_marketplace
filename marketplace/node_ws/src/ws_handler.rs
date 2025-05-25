@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
-use tokio::stream::{StreamExt};
+use futures_util::{StreamExt, SinkExt};
 use warp::ws::{Message, WebSocket};
 use warp::Filter;
 use uuid::Uuid;
@@ -60,7 +60,7 @@ async fn handle_websocket_connection(
     connections: NodeConnections
 ) {
     // Split the WebSocket into a sender and receiver
-    let (mut ws_tx, mut ws_rx) = ws.split();
+    let (mut ws_sender, mut ws_receiver) = ws.split();
     
     // Generate a unique ID for this connection
     let peer_id = Uuid::new_v4().to_string();
@@ -87,7 +87,7 @@ async fn handle_websocket_connection(
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
         while let Some(message) = ws_sender_rx.recv().await {
-            if let Err(e) = ws_tx.send(message).await {
+            if let Err(e) = ws_sender.send(message).await {
                 error!("Error sending message to WebSocket: {}", e);
                 break;
             }
@@ -98,7 +98,7 @@ async fn handle_websocket_connection(
     let message_handler = tokio::spawn({
         let ws_sender_tx = ws_sender_tx_clone.clone();
         async move {
-            while let Some(result) = ws_rx.next().await {
+            while let Some(result) = ws_receiver.next().await {
                 match result {
                     Ok(msg) => {
                         // Skip if not a text message

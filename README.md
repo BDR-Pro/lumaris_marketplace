@@ -1,196 +1,120 @@
-# Lumaris: Distributed Compute Marketplace
+# Lumaris Marketplace
 
-Lumaris is a decentralized marketplace for computing resources, enabling individuals or organizations to rent out spare CPU and memory capacity via a secure and trackable system. Buyers can submit computational tasks, and sellers (nodes) can offer their computing power in exchange for earnings.
+A decentralized marketplace to buy and sell computational power.
 
----
+## Project Overview
 
-## 🚀 Project Goals
+Lumaris Marketplace is a platform that enables users to buy and sell computational resources in a decentralized manner. The platform consists of several components:
 
-### 🔧 Core Objectives
+- **Marketplace API**: Handles user authentication, job submissions, and payments
+- **Node WebSocket Server**: Manages communication with compute nodes
+- **Distributed Engine**: Splits jobs into chunks and distributes them to nodes
+- **Rust GUI**: Provides a user interface for node operators
 
-* Enable users to **buy and sell CPU and memory resources**.
-* Ensure **isolation** using lightweight VMs (Firecracker).
-* Offer **real-time dashboards** for sellers and **tracking APIs** for admins.
-* Provide a secure and efficient **matchmaking and job dispatch system**.
-* Support **distributed computing**, allowing tasks to run across multiple nodes.
+## Components
 
----
+### Marketplace API
 
-## ✅ Features Implemented
+The API server handles:
+- User registration and authentication
+- Job submissions and tracking
+- Payment processing
+- Node registration and management
 
-### 🧠 Seller Node GUI (Rust + Egui)
+### Node WebSocket Server
 
-* Built with `eframe` and `egui`.
-* Displays real-time stats:
+The WebSocket server:
+- Manages connections with compute nodes
+- Distributes jobs to available nodes
+- Tracks node status and availability
+- Collects job results
 
-  * CPU usage
-  * Memory usage
-  * Node ID
-  * Funds earned
-* Communicates via WebSocket and REST to broadcast stats to central server.
+### Distributed Engine
 
-### 📡 WebSocket Server (Rust)
+The distributed engine:
+- Splits large jobs into smaller chunks
+- Distributes chunks to available nodes
+- Aggregates results from multiple nodes
+- Handles fault tolerance and retries
 
-* Accepts connections from seller nodes.
-* Receives and logs system stats in real time.
-* Simple broadcast mechanism for monitoring.
+### Rust GUI
 
-### 📊 Admin API (Python FastAPI)
+The GUI application:
+- Allows node operators to manage their nodes
+- Displays node status and performance metrics
+- Provides job history and earnings information
+- Configures node capabilities and availability
 
-* Endpoints:
+## Getting Started
 
-  * `/nodes/` - List all registered nodes.
-  * `/nodes/update` - Accepts stat updates from nodes.
-  * `/jobs/` - List submitted jobs.
-* SQLite backend for prototyping.
-* Pydantic models for validation.
-* Modular structure (`models.py`, `schemas.py`, `nodes.py`, `jobs.py`).
+### Prerequisites
 
-### 🔐 Authentication (Planned)
+- Rust 1.70 or later
+- Cargo
+- PostgreSQL
+- Redis (optional)
 
-* Placeholder for integrating JWT-based auth for:
+### Installation
 
-  * Admins
-  * Nodes (future token handshake)
-
-### 🔄 Resource Metrics (Rust, `sysinfo`, `winapi`)
-
-* Accurate CPU usage via low-level Windows API.
-* Memory usage calculated via `sysinfo`.
-
----
-
-## 🛠️ Features In Progress / To Do
-
-### 🧪 Firecracker VM Integration
-
-* [ ] Use Firecracker to spawn minimal VMs for job execution.
-* [ ] Each job is executed in an isolated microVM.
-* [ ] Job lifecycle: schedule -> run -> report.
-
-### 🛠️ Matchmaking Engine (Rust)
-
-* [ ] WebSocket-based live availability tracking.
-* [ ] Notify buyers of available nodes.
-* [ ] Assign jobs fairly across the network.
-
-### 🔗 Distributed Computing
-
-* [ ] Split jobs across multiple nodes.
-* [ ] Support for chunked job dispatch.
-* [ ] Merge results from distributed execution.
-
-### 💸 Payment and Billing Engine
-
-* [ ] Track usage time per job.
-* [ ] Charge buyers, credit sellers.
-* [ ] Integrate future payment APIs (e.g., Stripe, crypto).
-
-### 🌐 Frontend Dashboard (Future)
-
-* [ ] Admin dashboard for monitoring jobs, revenue.
-* [ ] Buyer dashboard to submit and track jobs.
-* [ ] Seller node registration and management.
-
----
-
-## 🧱 Architecture Summary
-
-```text
-+------------------+        +--------------------+        +-------------------------+
-|   Buyer Client   | <--->  |   Admin REST API   | <--->  |       SQLite DB        |
-+------------------+        +--------------------+        +-------------------------+
-         |                          ^                               ^
-         v                          |                               |
-+------------------+               |                               |
-|  WebSocket Match |  <------------+                               |
-|  (Rust Server)   | <---------------------------------------------+
-+------------------+     Stats / Availability Updates
-         ^
-         |
-+------------------+
-|  Seller Node GUI |
-|     (Rust)       |
-+------------------+
+1. Clone the repository:
+```bash
+git clone https://github.com/BDR-Pro/lumaris_marketplace.git
+cd lumaris_marketplace
 ```
 
----
+2. Build the project:
+```bash
+cargo build --release
+```
 
-## 📦 Tech Stack
+3. Run the components:
 
-| Component          | Technology            |
-| ------------------ | --------------------- |
-| GUI                | Rust + Egui           |
-| Admin API          | Python + FastAPI      |
-| Job Dispatch / WS  | Rust + Tungstenite    |
-| VM Execution       | Firecracker (planned) |
-| Metrics Collection | sysinfo + winapi      |
-| Database           | SQLite                |
-| Package Manager    | Cargo / pip           |
+**API Server:**
+```bash
+cd marketplace/api
+cargo run --release
+```
 
----
+**Node WebSocket Server:**
+```bash
+cd marketplace/node_ws
+cargo run --release
+```
 
-## 📝 Getting Started
+**GUI Application:**
+```bash
+cd marketplace/rust_gui
+cargo run --release
+```
 
-1. **Clone Repository**
+## Configuration
 
-   ```bash
-   git clone https://github.com/bdr-pro/lumaris_marketplace.git
-   cd lumaris_marketplace
-   ```
+Each component has its own configuration file in TOML format. Copy the example configuration files and modify them as needed:
 
-2. **Build All Components**
+```bash
+cp marketplace/api/config.example.toml marketplace/api/config.toml
+cp marketplace/node_ws/config.example.toml marketplace/node_ws/config.toml
+```
 
-   ```bash
-   # Make the build script executable
-   chmod +x build.sh
-   
-   # Build all Rust components
-   ./build.sh build
-   
-   # Set up Python environment
-   ./build.sh setup-python
-   ```
+## Development
 
-3. **Run Individual Components**
+### Running Tests
 
-   ```bash
-   # Run Node WebSocket Server
-   ./build.sh node-ws
-   
-   # Run Node Dashboard GUI
-   ./build.sh gui
-   
-   # Run Admin API
-   ./build.sh admin-api
-   ```
+```bash
+cargo test
+```
 
-4. **Run All Components**
+### Building Documentation
 
-   ```bash
-   # Build and run all components
-   ./build.sh all
-   ```
+```bash
+cargo doc --open
+```
 
----
+## License
 
-## 🤝 Contributors
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-* **Bader Alotaibi** – Vision, Rust GUI, architecture
+## Contributing
 
----
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-## Matchmaking Engine
-
-* [Match Making Design](matchmaking_design.md)
-
-## 🔮 Future Vision
-
-> A decentralized, pay-per-cycle computing marketplace allowing researchers, developers, and enterprises to access elastic CPU/GPU power from global contributors.
-
-Stay tuned for:
-
-* Docker orchestration
-* GPU support
-* P2P job relaying
-* Zero-trust execution environments

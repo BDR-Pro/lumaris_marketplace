@@ -9,12 +9,13 @@ use distributed_engine::{
     DistributedJobManager, JobPayload, JobChunk, JobResult
 };
 use crate::http_client::assign_job;
+use log::{info, error, debug};
+use tokio::time::{Duration, sleep};
 
 // Job scheduler is responsible for:
 // 1. Receiving job submissions
-// 2. Using the distributed engine to split jobs into chunks
-// 3. Using the matchmaker to assign chunks to nodes
-// 4. Tracking job progress and aggregating results
+// 2. Scheduling jobs on available nodes
+// 3. Tracking job status and results
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScheduledJob {

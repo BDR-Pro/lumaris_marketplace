@@ -11,7 +11,7 @@ mod vm_manager;
 use std::env;
 use error::Result;
 use config::Config;
-use log::{info, error};
+use log::{info, error, debug};
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
 
@@ -46,7 +46,7 @@ async fn main() {
     info!("Configuration loaded from: {}", config_path);
     
     // Create the matchmaker
-    let (matchmaker, _matchmaker_rx) = create_matchmaker();
+    let (matchmaker, _) = create_matchmaker();
     info!("✅ Matchmaker initialized");
     
     // Start WebSocket server for node connections

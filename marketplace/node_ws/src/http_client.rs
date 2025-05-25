@@ -1,7 +1,8 @@
-use log::{info, error, debug};
-use serde_json::{json, Value};
-use tokio::task;
+use log::{error, debug};
+use reqwest;
 use crate::error::{NodeError, Result};
+use serde_json::{self, Value};
+use std::collections::HashMap;
 
 pub async fn update_node_status(
     api_url: &str, 
@@ -139,12 +140,13 @@ pub async fn update_job_status(
         {
             Ok(response) => {
                 // Parse the response body as JSON
-                let body = match response.text() {
+                let body_result = response.text();
+                let body = match body_result {
                     Ok(text) => text,
                     Err(e) => return Err(NodeError::ApiError(e.to_string())),
                 };
                 
-                match serde_json::from_str(&body) {
+                match serde_json::from_str::<serde_json::Value>(&body) {
                     Ok(json) => Ok(json),
                     Err(e) => Err(NodeError::SerializationError(e))
                 }

@@ -1,6 +1,10 @@
 // node_ws/src/vm_manager.rs
 // Placeholder for managing Firecracker VMs
 use crate::http_client::update_job_status;
+use log::{info, error, debug};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 pub fn spawn_vm(os_type: &str) {
     println!("Spawning VM with OS: {}", os_type);

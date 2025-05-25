@@ -2,6 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::ops::Div;
 
 pub mod error;
 pub use error::{EngineError, Result};
@@ -65,6 +66,9 @@ pub trait JobSplitter: Send + Sync {
     
     /// Calculate dependencies between job chunks
     fn calculate_dependencies(&self, chunks: &mut Vec<JobChunk>);
+    
+    /// Split a text job into chunks
+    fn split_text_job(&self, job_id: u64, text: &str) -> Vec<JobChunk>;
 }
 
 pub trait ResultAggregator: Send + Sync {
@@ -186,6 +190,48 @@ impl JobSplitter for DefaultJobSplitter {
                 }
             }
         }
+    }
+    
+    fn split_text_job(&self, job_id: u64, text: &str) -> Vec<JobChunk> {
+        // Split the text into lines
+        let lines: Vec<&str> = text.lines().collect();
+        
+        if lines.is_empty() {
+            return vec![];
+        }
+        
+        // Calculate the number of chunks
+        let num_chunks = lines.len().div_ceil(self.chunk_size_threshold);
+        
+        // Create chunks
+        let mut chunks = Vec::with_capacity(num_chunks);
+        
+        for i in 0..num_chunks {
+            let start = i * self.chunk_size_threshold;
+            let end = std::cmp::min((i + 1) * self.chunk_size_threshold, lines.len());
+            
+            let chunk_data = lines[start..end].join("\n");
+            
+            let chunk_payload = JobPayload {
+                command: job_data.payload.command.clone(),
+                args: job_data.payload.args.clone(),
+                input_data: Some(chunk_data),
+                env_vars: job_data.payload.env_vars.clone(),
+            };
+            
+            let chunk = JobChunk {
+                chunk_id: (i + 1) as u64,
+                parent_job_id: job_data.job_id,
+                payload: chunk_payload,
+                dependencies: Vec::new(),
+                estimated_work_units: (end - start) as u64,
+                result: None,
+            };
+            
+            chunks.push(chunk);
+        }
+        
+        chunks
     }
 }
 

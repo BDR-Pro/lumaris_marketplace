@@ -10,6 +10,7 @@ The Lumaris Marketplace consists of the following components:
 2. **Django Admin Dashboard** - Provides a user-friendly interface for monitoring and managing the marketplace
 3. **PostgreSQL Database** - Stores all marketplace data
 4. **Nginx** - Serves as a reverse proxy and handles SSL termination
+5. **WebSocket Server** - Provides real-time communication between the marketplace and nodes
 
 ## Quick Start with Docker Compose
 
@@ -41,6 +42,43 @@ The easiest way to run the entire Lumaris Marketplace is using Docker Compose:
 5. Access the services:
    - Admin Dashboard: https://localhost (or http://localhost:8000 directly)
    - API: https://localhost/api/ (or http://localhost:8080 directly)
+   - WebSocket: wss://localhost/ws/ (or ws://localhost:8080/ws directly)
+
+## Development Setup
+
+### Using Conda
+
+For development with Conda, you can create an environment using the provided `environment.yml` file:
+
+```bash
+# Create the conda environment
+conda env create -f environment.yml
+
+# Activate the environment
+conda activate lumaris-marketplace
+
+# Run the tests
+cd marketplace
+pytest
+```
+
+### Using Pip
+
+If you prefer to use pip, you can install the dependencies from the requirements files:
+
+```bash
+# Create a virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# Run the tests
+cd marketplace
+pytest
+```
 
 ## Manual Setup
 
@@ -90,36 +128,82 @@ The Lumaris Marketplace follows a microservices architecture:
    - Handles SSL termination
    - Routes requests to the appropriate service
 
-## Development
+5. **WebSocket Server**:
+   - Integrated with FastAPI
+   - Provides real-time communication
+   - Handles node connections, heartbeats, and notifications
 
-For development, you can run the services individually:
+## WebSocket API
 
-1. **API (FastAPI)**:
+The WebSocket API provides real-time communication between the marketplace and nodes. It supports the following message types:
+
+### Connection
+
+Connect to the WebSocket server with a valid token:
+
+```
+ws://localhost:8080/ws?token=<node_token>
+```
+
+### Message Types
+
+1. **Heartbeat**:
+   ```json
+   {"type": "heartbeat"}
    ```
-   cd api
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   uvicorn main:app --reload --port 8080
+   Response:
+   ```json
+   {"type": "heartbeat_ack", "timestamp": "2023-08-01T12:00:00.000000"}
    ```
 
-2. **Admin Dashboard (Django)**:
+2. **Status Update**:
+   ```json
+   {
+     "type": "status_update",
+     "status": "busy",
+     "cpu_usage": 8.5,
+     "mem_usage": 12288.0
+   }
    ```
-   cd admin_dashboard
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   python manage.py runserver
+   Response:
+   ```json
+   {"type": "status_update_ack", "timestamp": "2023-08-01T12:00:00.000000"}
    ```
 
-## Production Deployment
+3. **Job Update**:
+   ```json
+   {
+     "type": "job_update",
+     "job_id": "job-123",
+     "status": "running"
+   }
+   ```
+   Response:
+   ```json
+   {
+     "type": "job_update_ack",
+     "job_id": "job-123",
+     "timestamp": "2023-08-01T12:00:00.000000"
+   }
+   ```
 
-For production deployment:
+## Running Tests
 
-1. Set `DEBUG=false` in the `.env` file
-2. Use proper SSL certificates
-3. Set strong passwords for the database and API key
-4. Configure proper ALLOWED_HOSTS and CORS settings
+To run the tests, use pytest:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=marketplace
+
+# Run specific test file
+pytest tests/test_websocket.py
+
+# Run with verbose output
+pytest -v
+```
 
 ## License
 

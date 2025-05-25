@@ -59,7 +59,7 @@ async fn handle_websocket_connection(
     connections: NodeConnections
 ) {
     // Split the WebSocket into a sender and receiver
-    let (ws_tx, mut ws_rx) = ws.split();
+    let (mut ws_tx, mut ws_rx) = ws.split();
     
     // Generate a unique ID for this connection
     let peer_id = Uuid::new_v4().to_string();
@@ -81,6 +81,7 @@ async fn handle_websocket_connection(
     
     // Create a channel for sending messages to the WebSocket
     let (ws_sender_tx, mut ws_sender_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    let ws_sender_tx_clone = ws_sender_tx.clone();
     
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
@@ -93,57 +94,62 @@ async fn handle_websocket_connection(
     });
     
     // Handle incoming WebSocket messages
-    let message_handler = tokio::spawn(async move {
-        while let Some(result) = ws_rx.next().await {
-            match result {
-                Ok(msg) => {
-                    // Skip if not a text message
-                    if !msg.is_text() {
-                        continue;
-                    }
-                    
-                    // Get the message text
-                    let msg_text = msg.to_str().unwrap_or_default();
-                    
-                    // Process the message
-                    if let Err(e) = process_message(msg_text, &peer_id_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
-                        error!("Error processing message: {}", e);
-                        
-                        // Send error response
-                        let error_response = json!({
-                            "type": "error",
-                            "message": format!("Error processing message: {}", e)
-                        }).to_string();
-                        
-                        if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
-                            error!("Error sending error response: {}", e);
-                            break;
+    let message_handler = tokio::spawn({
+        let ws_sender_tx = ws_sender_tx_clone.clone();
+        async move {
+            while let Some(result) = ws_rx.next().await {
+                match result {
+                    Ok(msg) => {
+                        // Skip if not a text message
+                        if !msg.is_text() {
+                            continue;
                         }
+                        
+                        // Get the message text
+                        let msg_text = msg.to_str().unwrap_or_default();
+                        
+                        // Process the message
+                        if let Err(e) = process_message(msg_text, &peer_id_clone, &matchmaker_clone, &connections_clone, &ws_sender_tx).await {
+                            error!("Error processing message: {}", e);
+                            
+                            // Send error response
+                            let error_response = json!({
+                                "type": "error",
+                                "message": format!("Error processing message: {}", e)
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                                error!("Error sending error response: {}", e);
+                                break;
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        error!("WebSocket error: {}", e);
+                        break;
                     }
-                },
-                Err(e) => {
-                    error!("WebSocket error: {}", e);
-                    break;
                 }
             }
+            
+            // WebSocket closed, remove from connections
+            {
+                let mut conns = connections_clone.lock().await;
+                conns.remove(&peer_id_clone);
+            }
+            
+            info!("WebSocket connection closed: {}", peer_id_clone);
         }
-        
-        // WebSocket closed, remove from connections
-        {
-            let mut conns = connections_clone.lock().await;
-            conns.remove(&peer_id_clone);
-        }
-        
-        info!("WebSocket connection closed: {}", peer_id_clone);
     });
     
     // Forward broadcast messages to this WebSocket
-    let ws_sender_tx_clone = ws_sender_tx.clone();
-    let forward_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            if let Err(e) = ws_sender_tx_clone.send(Message::text(msg.clone())) {
-                error!("Error sending message: {}", e);
-                break;
+    let forward_task = tokio::spawn({
+        let ws_sender_tx = ws_sender_tx_clone;
+        async move {
+            while let Some(msg) = rx.recv().await {
+                if let Err(e) = ws_sender_tx.send(Message::text(msg.clone())) {
+                    error!("Error sending message: {}", e);
+                    break;
+                }
             }
         }
     });

@@ -1,279 +1,196 @@
-// File: marketplace/node_ws/src/ws_handler.rs (updated)
+// node_ws/src/ws_handler.rs
+// WebSocket handler for node communication
 
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
-use tokio_tungstenite::{accept_async, tungstenite::protocol::Message};
 use futures_util::{SinkExt, StreamExt};
-use futures::{FutureExt, StreamExt};
 use std::sync::Arc;
 use std::collections::HashMap;
-use std::time::Duration;
 use tokio::time::sleep;
 use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 use warp::Filter;
 use log::{info, error, debug, warn};
 use serde_json::{json, Value};
 use chrono::Utc;
+use warp::ws::{Message, WebSocket};
 
-use crate::matchmaker::{
-    SharedMatchMaker, NodeCapabilities, 
-    JobStatus, MatchmakerMessage
-};
-use crate::http_client::{update_node_availability, update_job_status};
 use crate::error::{NodeError, Result};
+use crate::http_client::{update_node_availability, update_job_status};
+use crate::matchmaker::{
+    MatchMaker, SharedMatchMaker, NodeCapabilities,
+    JobStatus
+};
 
-// Type aliases for clarity
-type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
+// Type alias for WebSocket result
 type WsResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-// Main WebSocket server function
-pub async fn run_ws_server(addr: &str, port: u16, matchmaker: SharedMatchMaker) -> Result<()> {
-    let addr = format!("{}:{}", addr, port);
-    info!("🚀 WebSocket server listening on {}", addr);
-    
-    // Store active connections
-    let connections: NodeConnections = Arc::new(Mutex::new(HashMap::new()));
-    
-    // Clone for event listener
-    let _connections_for_events = connections.clone();
-    
-    // Create a broadcast channel for matchmaker events
-    let (tx, _rx) = broadcast::channel::<String>(100);
-    
-    // Listen for matchmaker events
-    tokio::spawn(async move {
-        // In a real implementation, you would listen for events from the matchmaker
-        // and broadcast them to all connected clients
-        loop {
-            sleep(Duration::from_secs(10)).await;
-            let _ = tx.send(json!({
-                "type": "heartbeat",
-                "timestamp": Utc::now().timestamp()
-            }).to_string());
-        }
-    });
-    
-    // Create a TCP listener
-    let listener = TcpListener::bind(&addr).await?;
-    
-    // Accept connections
-    while let Ok((stream, addr)) = listener.accept().await {
-        info!("New connection from: {}", addr);
-        let peer = format!("{}", addr);
-        
-        // Handle the WebSocket connection
-        tokio::spawn(handle_tcp_connection(stream, peer, connections.clone(), matchmaker.clone()));
-    }
-    
-    Ok(())
-}
+// Type alias for node connections
+type NodeConnections = Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<Message>>>>;
 
-// Handle a single WebSocket connection
-async fn handle_tcp_connection(
-    stream: TcpStream,
-    peer_id: String,
-    connections: NodeConnections,
-    matchmaker: SharedMatchMaker
-) -> WsResult<()> {
-    // Upgrade the TCP stream to a WebSocket connection
-    let ws_stream = accept_async(stream).await?;
-    info!("WebSocket connection established with: {}", peer_id);
+// Start the WebSocket server
+pub async fn run_ws_server(matchmaker: SharedMatchMaker) -> Result<()> {
+    // Create the WebSocket handler
+    let ws_route = create_ws_handler(matchmaker.clone());
     
-    // Split the WebSocket stream into sender and receiver
-    let (mut ws_sender, mut ws_receiver) = ws_stream.split();
+    // Create the health check route
+    let health_route = warp::path("health")
+        .map(|| "OK");
     
-    // Create a channel for sending messages to this client
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    // Combine the routes
+    let routes = ws_route.or(health_route);
     
-    // Store the sender in our connections map
-    {
-        let mut connections = connections.lock().await;
-        connections.insert(peer_id.clone(), tx);
-    }
-    
-    // Send a welcome message
-    let welcome_msg = Message::Text(json!({
-        "type": "welcome",
-        "message": "Connected to Lumaris Marketplace Node WebSocket",
-        "timestamp": Utc::now().timestamp()
-    }).to_string().into());
-    
-    ws_sender.send(welcome_msg).await?;
-    
-    // Forward messages from the channel to the WebSocket
-    let mut send_task = tokio::spawn(async move {
-        while let Some(msg) = rx.recv().await {
-            ws_sender.send(msg).await?;
-        }
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
-    });
-    
-    // Process incoming messages
-    let mut recv_task = tokio::spawn(async move {
-        while let Some(result) = ws_receiver.next().await {
-            match result {
-                Ok(msg) => {
-                    match msg {
-                        Message::Text(text) => {
-                            process_message(&text, &peer_id, &matchmaker, &connections).await?;
-                        }
-                        Message::Close(_) => {
-                            info!("Connection closed by client: {}", peer_id);
-                            break;
-                        }
-                        _ => {} // Ignore other message types
-                    }
-                }
-                Err(e) => {
-                    error!("Error receiving message from {}: {}", peer_id, e);
-                    break;
-                }
-            }
-        }
-        
-        // Remove connection when client disconnects
-        let mut connections = connections.lock().await;
-        connections.remove(&peer_id);
-        info!("Removed connection: {}", peer_id);
-        
-        // Mark node as unavailable
-        {
-            let mut matchmaker = matchmaker.lock().unwrap();
-            if let Some(node) = matchmaker.get_node_by_id_mut(&peer_id) {
-                node.available = false;
-                info!("Marked node {} as unavailable", peer_id);
-                
-                // Update availability in the API
-                let peer_id_clone = peer_id.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = update_node_availability("http://localhost:8000", &peer_id_clone, false).await {
-                        error!("Failed to update node availability: {:?}", e);
-                    }
-                });
-            }
-        }
-        
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
-    });
-    
-    // Wait for either task to complete
-    tokio::select! {
-        res = &mut send_task => {
-            if let Err(e) = res {
-                error!("Send task error: {:?}", e);
-            }
-        }
-        res = &mut recv_task => {
-            if let Err(e) = res {
-                error!("Receive task error: {:?}", e);
-            }
-        }
-    }
+    // Start the server
+    info!("Starting WebSocket server on 0.0.0.0:3030");
+    warp::serve(routes)
+        .run(([0, 0, 0, 0], 3030))
+        .await;
     
     Ok(())
 }
 
 // Handle a WebSocket connection
 async fn handle_websocket_connection(
-    socket: warp::ws::WebSocket,
+    ws: WebSocket,
     matchmaker: SharedMatchMaker,
     mut rx: broadcast::Receiver<String>
 ) {
-    info!("New WebSocket connection established");
+    // Split the WebSocket into a sender and receiver
+    let (mut ws_tx, mut ws_rx) = ws.split();
     
-    let (mut tx, mut rx_ws) = socket.split();
+    // Generate a unique ID for this connection
+    let peer_id = uuid::Uuid::new_v4().to_string();
+    info!("New WebSocket connection: {}", peer_id);
+    
+    // Create a channel for sending messages to this WebSocket
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    
+    // Store the sender in the connections map
+    let connections = Arc::new(Mutex::new(HashMap::new()));
+    {
+        let mut connections = connections.lock().await;
+        connections.insert(peer_id.clone(), tx);
+    }
+    
+    // Clone the matchmaker for use in the task
+    let matchmaker_clone = matchmaker.clone();
     
     // Handle incoming messages
-    let matchmaker_clone = matchmaker.clone();
     tokio::task::spawn(async move {
-        while let Some(result) = rx_ws.next().await {
+        while let Some(result) = ws_rx.next().await {
             match result {
                 Ok(msg) => {
-                    if let Ok(text) = msg.to_str() {
-                        info!("Received message: {}", text);
+                    // Handle the message
+                    if msg.is_text() {
+                        let text = msg.to_str().unwrap_or_default();
+                        debug!("Received message: {}", text);
                         
                         // Parse the message as JSON
-                        if let Ok(json) = serde_json::from_str::<Value>(text) {
-                            // Process the message based on its type
-                            if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
-                                match msg_type {
-                                    "node_registration" => {
-                                        // Handle node registration
-                                        if let Some(node_id) = json.get("node_id").and_then(|n| n.as_str()) {
-                                            let cpu_cores = json.get("cpu_cores").and_then(|c| c.as_f64()).unwrap_or(1.0) as f32;
-                                            let memory_mb = json.get("memory_mb").and_then(|m| m.as_u64()).unwrap_or(1024);
+                        match serde_json::from_str::<Value>(text) {
+                            Ok(json) => {
+                                // Process the message based on its type
+                                if let Some(msg_type) = json.get("type").and_then(|t| t.as_str()) {
+                                    match msg_type {
+                                        "node_registration" => {
+                                            info!("Node registration from: {}", peer_id);
+                                            
+                                            // Extract node capabilities
+                                            let cpu_cores = json["capabilities"]["cpu_cores"].as_f64().unwrap_or(1.0) as f32;
+                                            let memory_mb = json["capabilities"]["memory_mb"].as_u64().unwrap_or(1024);
                                             
                                             let node = NodeCapabilities {
-                                                node_id: node_id.to_string(),
+                                                node_id: peer_id.clone(),
                                                 cpu_cores,
                                                 memory_mb,
                                                 available: true,
-                                                reliability_score: 1.0,
+                                                reliability_score: 1.0, // Default for new nodes
                                                 last_updated: Utc::now().timestamp() as u64,
                                             };
                                             
-                                            let mut mm = matchmaker_clone.lock().unwrap();
-                                            mm.register_node(node);
-                                        }
-                                    },
-                                    "node_status" => {
-                                        // Update node status
-                                        let cpu_usage = json.get("status").and_then(|s| s.get("cpu_usage").and_then(|c| c.as_f64())).unwrap_or(0.0) as f32;
-                                        let memory_usage = json.get("status").and_then(|s| s.get("memory_usage").and_then(|m| m.as_f64())).unwrap_or(0.0) as f32;
-                                        let available = json.get("status").and_then(|s| s.get("available").and_then(|a| a.as_bool())).unwrap_or(true);
-                                        
-                                        {
-                                            let mut matchmaker = matchmaker_clone.lock().unwrap();
-                                            if let Some(node) = matchmaker.get_node_by_id_mut(peer_id) {
-                                                // Update node capabilities based on current usage
-                                                node.available = available;
-                                                node.last_updated = Utc::now().timestamp() as u64;
-                                                
-                                                debug!("Updated node {} status: CPU {}%, Memory {}%, Available: {}", 
-                                                    peer_id, cpu_usage, memory_usage, available);
-                                            }
-                                        }
-                                    },
-                                    "job_status_update" => {
-                                        // Extract job ID and status
-                                        if let (Some(job_id), Some(status_str)) = (
-                                            json.get("job_id").and_then(|j| j.as_u64()),
-                                            json.get("status").and_then(|s| s.as_str())
-                                        ) {
-                                            // Convert status string to enum
-                                            let status = match status_str {
-                                                "queued" => JobStatus::Queued,
-                                                "matching" => JobStatus::Matching,
-                                                "assigned" => JobStatus::Assigned,
-                                                "running" => JobStatus::Running,
-                                                "completed" => JobStatus::Completed,
-                                                "failed" => JobStatus::Failed,
-                                                _ => JobStatus::Failed,
-                                            };
-                                            
-                                            // Extract result data if available
-                                            let result_data = json.get("result").cloned();
-                                            
-                                            // Update job status in matchmaker
+                                            // Register the node with the matchmaker
                                             {
                                                 let mut mm = matchmaker_clone.lock().unwrap();
-                                                let _ = mm.update_job_status(job_id, status_str.to_string());
+                                                mm.register_node(node.clone());
                                             }
                                             
-                                            // Update job status in the API
-                                            let job_id_copy = job_id;
-                                            let status_str_copy = status_str.to_string();
+                                            // Update node availability in the API
+                                            let node_id_copy = peer_id.clone();
                                             tokio::spawn(async move {
-                                                if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
-                                                    error!("Failed to update job status: {:?}", e);
+                                                if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, true).await {
+                                                    error!("Failed to update node availability: {:?}", e);
                                                 }
                                             });
+                                            
+                                            // Send a confirmation message
+                                            let response = json!({
+                                                "type": "registration_confirmation",
+                                                "node_id": peer_id,
+                                                "status": "registered"
+                                            }).to_string();
+                                            
+                                            if let Err(e) = ws_tx.send(Message::text(response)).await {
+                                                error!("Error sending registration confirmation: {:?}", e);
+                                            }
+                                        },
+                                        "node_status" => {
+                                            // Update node status
+                                            let available = json["available"].as_bool().unwrap_or(true);
+                                            
+                                            {
+                                                let mut mm = matchmaker_clone.lock().unwrap();
+                                                mm.update_node_availability(&peer_id, available);
+                                            }
+                                            
+                                            // Update node availability in the API
+                                            let node_id_copy = peer_id.clone();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, available).await {
+                                                    error!("Failed to update node availability: {:?}", e);
+                                                }
+                                            });
+                                        },
+                                        "job_status_update" => {
+                                            // Extract job ID and status
+                                            if let (Some(job_id), Some(status_str)) = (
+                                                json.get("job_id").and_then(|j| j.as_u64()),
+                                                json.get("status").and_then(|s| s.as_str())
+                                            ) {
+                                                // Convert status string to enum
+                                                let status = match status_str {
+                                                    "queued" => JobStatus::Queued,
+                                                    "matching" => JobStatus::Matching,
+                                                    "assigned" => JobStatus::Assigned,
+                                                    "running" => JobStatus::Running,
+                                                    "completed" => JobStatus::Completed,
+                                                    "failed" => JobStatus::Failed,
+                                                    _ => JobStatus::Failed,
+                                                };
+                                                
+                                                // Extract result data if available
+                                                let result_data = json.get("result").cloned();
+                                                
+                                                // Update job status in matchmaker
+                                                {
+                                                    let mut mm = matchmaker_clone.lock().unwrap();
+                                                    let _ = mm.update_job_status(job_id, status_str.to_string());
+                                                }
+                                                
+                                                // Update job status in the API
+                                                let job_id_copy = job_id;
+                                                let status_str_copy = status_str.to_string();
+                                                tokio::spawn(async move {
+                                                    if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
+                                                        error!("Failed to update job status: {:?}", e);
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        _ => {
+                                            info!("Unknown message type: {}", msg_type);
                                         }
-                                    },
-                                    _ => {
-                                        info!("Unknown message type: {}", msg_type);
                                     }
                                 }
+                            },
+                            Err(e) => {
+                                error!("Error parsing message: {:?}", e);
                             }
                         }
                     }
@@ -368,8 +285,6 @@ async fn process_message(
                     });
                 }
             },
-                }
-            },
             _ => {
                 debug!("Unknown message type: {}", msg_type);
             }
@@ -446,3 +361,4 @@ fn with_matchmaker(matchmaker: SharedMatchMaker) -> impl Filter<Extract = (Share
 fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (broadcast::Sender<String>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || tx.clone())
 }
+

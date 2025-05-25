@@ -1,54 +1,64 @@
-// File: marketplace/node_ws/src/main.rs (updated)
-
-mod error;
-mod config;
-mod http_client;
+mod api_client;
 mod matchmaker;
 mod ws_handler;
-mod job_scheduler;
-mod vm_manager;
 
-use std::env;
-use config::Config;
 use log::{info, error};
+use dotenv::dotenv;
+use std::env;
+use std::time::Duration;
+use tokio::time::sleep;
+use tokio::sync::Mutex;
+use std::sync::Arc;
+use std::collections::HashMap;
+
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
-use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
 #[tokio::main]
 async fn main() {
-    // Load configuration
-    let config_path = env::var("LUMARIS_CONFIG")
-        .unwrap_or_else(|_| "../config.toml".to_string());
+    // Initialize environment variables
+    dotenv().ok();
     
-    let config = Config::load(&config_path).unwrap_or_else(|e| {
-        eprintln!("Failed to load config: {}. Using default configuration.", e);
-        Config::default()
-    });
+    // Initialize logger
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     
-    // Initialize the logger
-    let log_level = match config.logging.level.to_lowercase().as_str() {
-        "debug" => log::LevelFilter::Debug,
-        "info" => log::LevelFilter::Info,
-        "warn" => log::LevelFilter::Warn,
-        "error" => log::LevelFilter::Error,
-        _ => log::LevelFilter::Info,
-    };
+    // Print banner
+    info!("
+    ██╗     ██╗   ██╗███╗   ███╗ █████╗ ██████╗ ██╗███████╗
+    ██║     ██║   ██║████╗ ████║██╔══██╗██╔══██╗██║██╔════╝
+    ██║     ██║   ██║██╔████╔██║███████║██████╔╝██║███████╗
+    ██║     ██║   ██║██║╚██╔╝██║██╔══██║██╔══██╗██║╚════██║
+    ███████╗╚██████╔╝██║ ╚═╝ ██║██║  ██║██║  ██║██║███████║
+    ╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚══════╝
     
-    let mut builder = env_logger::Builder::new();
-    builder.filter_level(log_level);
+    Node WebSocket Server
+    ");
     
-    if config.logging.console {
-        builder.init();
-    }
-    
-    info!("🚀 Starting Lumaris Marketplace Service");
-    info!("Configuration loaded from: {}", config_path);
+    // Get API URL from environment variables
+    let api_url = env::var("API_URL").unwrap_or_else(|_| "http://localhost:8000".to_string());
+    info!("API URL: {}", api_url);
     
     // Create the matchmaker
-    let (matchmaker, _) = create_matchmaker();
-    info!("✅ Matchmaker initialized");
+    let matchmaker = create_matchmaker();
+    
+    // Wait for API to be ready
+    info!("Waiting for API to be ready...");
+    let mut api_ready = false;
+    for _ in 0..30 {
+        match reqwest::get(&format!("{}/health", api_url)).await {
+            Ok(response) if response.status().is_success() => {
+                api_ready = true;
+                break;
+            },
+            _ => {
+                sleep(Duration::from_secs(1)).await;
+            }
+        }
+    }
+    
+    if !api_ready {
+        error!("API not ready after 30 seconds, continuing anyway...");
+    }
     
     // Start WebSocket server for node connections
     info!("🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...");
@@ -57,3 +67,4 @@ async fn main() {
         error!("WebSocket server error: {}", e);
     }
 }
+

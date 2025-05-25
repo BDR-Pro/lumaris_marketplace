@@ -210,7 +210,9 @@ async fn handle_websocket_connection(
     // Forward broadcast messages to this WebSocket
     tokio::task::spawn(async move {
         while let Some(msg) = rx.recv().await {
+
             if let Err(e) = ws_tx.send(Message::text(msg.clone())).await {
+      
                 error!("Error sending message: {}", e);
                 break;
             }

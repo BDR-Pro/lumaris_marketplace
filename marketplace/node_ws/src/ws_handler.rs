@@ -4,13 +4,14 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{accept_async, tungstenite::protocol::Message};
 use futures_util::{SinkExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::sleep;
 use tokio::sync::broadcast;
 use warp::Filter;
-use log::{info, error, debug};
+use log::{info, error, debug, warn};
 use serde_json::{json, Value};
 use chrono::Utc;
 
@@ -235,13 +236,38 @@ async fn handle_websocket_connection(
                                     },
                                     "job_status_update" => {
                                         // Extract job ID and status
-                                        if let (Some(job_id), Some(status)) = (
+                                        if let (Some(job_id), Some(status_str)) = (
                                             json.get("job_id").and_then(|j| j.as_u64()),
                                             json.get("status").and_then(|s| s.as_str())
                                         ) {
-                                            // Update job status
-                                            let mut mm = matchmaker_clone.lock().unwrap();
-                                            let _ = mm.update_job_status(job_id, status.to_string());
+                                            // Convert status string to enum
+                                            let status = match status_str {
+                                                "queued" => JobStatus::Queued,
+                                                "matching" => JobStatus::Matching,
+                                                "assigned" => JobStatus::Assigned,
+                                                "running" => JobStatus::Running,
+                                                "completed" => JobStatus::Completed,
+                                                "failed" => JobStatus::Failed,
+                                                _ => JobStatus::Failed,
+                                            };
+                                            
+                                            // Extract result data if available
+                                            let result_data = json.get("result").cloned();
+                                            
+                                            // Update job status in matchmaker
+                                            {
+                                                let mut mm = matchmaker_clone.lock().unwrap();
+                                                let _ = mm.update_job_status(job_id, status_str.to_string());
+                                            }
+                                            
+                                            // Update job status in the API
+                                            let job_id_copy = job_id;
+                                            let status_str_copy = status_str.to_string();
+                                            tokio::spawn(async move {
+                                                if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
+                                                    error!("Failed to update job status: {:?}", e);
+                                                }
+                                            });
                                         }
                                     },
                                     _ => {
@@ -308,13 +334,40 @@ async fn process_message(
             },
             "job_status_update" => {
                 // Extract job ID and status
-                if let (Some(job_id), Some(status)) = (
+                if let (Some(job_id), Some(status_str)) = (
                     parsed.get("job_id").and_then(|j| j.as_u64()),
                     parsed.get("status").and_then(|s| s.as_str())
                 ) {
-                    // Update job status
-                    let mut mm = matchmaker.lock().unwrap();
-                    let _ = mm.update_job_status(job_id, status.to_string());
+                    // Convert status string to enum
+                    let status = match status_str {
+                        "queued" => JobStatus::Queued,
+                        "matching" => JobStatus::Matching,
+                        "assigned" => JobStatus::Assigned,
+                        "running" => JobStatus::Running,
+                        "completed" => JobStatus::Completed,
+                        "failed" => JobStatus::Failed,
+                        _ => JobStatus::Failed,
+                    };
+                    
+                    // Extract result data if available
+                    let result_data = parsed.get("result").cloned();
+                    
+                    // Update job status in matchmaker
+                    {
+                        let mut mm = matchmaker.lock().unwrap();
+                        let _ = mm.update_job_status(job_id, status_str.to_string());
+                    }
+                    
+                    // Update job status in the API
+                    let job_id_copy = job_id;
+                    let status_str_copy = status_str.to_string();
+                    tokio::spawn(async move {
+                        if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
+                            error!("Failed to update job status: {:?}", e);
+                        }
+                    });
+                }
+            },
                 }
             },
             _ => {

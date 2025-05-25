@@ -108,7 +108,7 @@ async fn handle_websocket_connection(
                                             // Register the node with the matchmaker
                                             {
                                                 let mut mm = matchmaker_clone.lock().unwrap();
-                                                mm.add_node(node.clone());
+                                                mm.update_node(node.clone());
                                             }
                                             
                                             // Update node availability in the API
@@ -246,7 +246,7 @@ async fn process_message(
                 // Register the node with the matchmaker
                 {
                     let mut mm = matchmaker.lock().unwrap();
-                    mm.add_node(node.clone());
+                    mm.update_node(node.clone());
                 }
             },
             "job_status_update" => {

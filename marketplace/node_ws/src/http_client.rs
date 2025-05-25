@@ -1,7 +1,6 @@
 use log::{error, debug};
 use serde_json::{json, Value};
 use crate::error::{NodeError, Result};
-use std::collections::HashMap;
 
 pub async fn update_node_status(
     api_url: &str,

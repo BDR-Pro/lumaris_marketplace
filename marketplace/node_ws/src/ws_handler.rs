@@ -136,7 +136,7 @@ async fn handle_websocket_connection(
                                             
                                             {
                                                 let mut mm = matchmaker_clone.lock().unwrap();
-                                                mm.update_node_availability(&peer_id, available);
+                                                mm.update_node_availability(peer_id.clone(), available);
                                             }
                                             
                                             // Update node availability in the API
@@ -205,7 +205,7 @@ async fn handle_websocket_connection(
     
     // Forward broadcast messages to this WebSocket
     tokio::task::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
+        while let Some(msg) = rx.recv().await {
             if let Err(e) = ws_tx.send(Message::text(msg)).await {
                 error!("Error sending message: {}", e);
                 break;

@@ -4,19 +4,19 @@
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Arc;
 use std::collections::HashMap;
-use tokio::time::sleep;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use warp::Filter;
-use log::{info, error, debug, warn};
+use log::{info, error, debug};
 use serde_json::{json, Value};
 use chrono::Utc;
 use warp::ws::{Message, WebSocket};
+use uuid::Uuid;
 
-use crate::error::{NodeError, Result};
+use crate::error::Result;
 use crate::http_client::{update_node_availability, update_job_status};
 use crate::matchmaker::{
-    MatchMaker, SharedMatchMaker, NodeCapabilities,
+    SharedMatchMaker, NodeCapabilities,
     JobStatus
 };
 
@@ -57,7 +57,7 @@ async fn handle_websocket_connection(
     let (mut ws_tx, mut ws_rx) = ws.split();
     
     // Generate a unique ID for this connection
-    let peer_id = uuid::Uuid::new_v4().to_string();
+    let peer_id = Uuid::new_v4().to_string();
     info!("New WebSocket connection: {}", peer_id);
     
     // Create a channel for sending messages to this WebSocket
@@ -108,7 +108,7 @@ async fn handle_websocket_connection(
                                             // Register the node with the matchmaker
                                             {
                                                 let mut mm = matchmaker_clone.lock().unwrap();
-                                                mm.register_node(node.clone());
+                                                mm.add_node(node.clone());
                                             }
                                             
                                             // Update node availability in the API
@@ -206,7 +206,7 @@ async fn handle_websocket_connection(
     // Forward broadcast messages to this WebSocket
     tokio::task::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            if let Err(e) = tx.send(warp::ws::Message::text(msg)).await {
+            if let Err(e) = ws_tx.send(Message::text(msg)).await {
                 error!("Error sending message: {}", e);
                 break;
             }
@@ -220,7 +220,7 @@ async fn process_message(
     peer_id: &str,
     matchmaker: &SharedMatchMaker,
     connections: &NodeConnections
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> WsResult<()> {
     // Parse the message as JSON
     let parsed: Value = serde_json::from_str(message)?;
     
@@ -246,7 +246,7 @@ async fn process_message(
                 // Register the node with the matchmaker
                 {
                     let mut mm = matchmaker.lock().unwrap();
-                    mm.register_node(node.clone());
+                    mm.add_node(node.clone());
                 }
             },
             "job_status_update" => {
@@ -317,7 +317,7 @@ async fn handle_job_status_update(
         "status": status_str
     }).to_string();
     
-    let ws_msg = Message::Text(update_msg.into());
+    let ws_msg = Message::text(update_msg);
     
     // Broadcast to all connected clients
     let connections = connections.lock().await;
@@ -361,4 +361,3 @@ fn with_matchmaker(matchmaker: SharedMatchMaker) -> impl Filter<Extract = (Share
 fn with_broadcaster(tx: broadcast::Sender<String>) -> impl Filter<Extract = (broadcast::Sender<String>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || tx.clone())
 }
-

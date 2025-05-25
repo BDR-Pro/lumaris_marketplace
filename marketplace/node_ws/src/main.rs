@@ -9,9 +9,8 @@ mod job_scheduler;
 mod vm_manager;
 
 use std::env;
-use error::Result;
 use config::Config;
-use log::{info, error, debug};
+use log::{info, error};
 use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
 
@@ -50,12 +49,8 @@ async fn main() {
     info!("✅ Matchmaker initialized");
     
     // Start WebSocket server for node connections
-    let ws_host = config.node_ws.host.clone();
-    let ws_port = config.node_ws.port;
-    let matchmaker_for_ws = matchmaker.clone();
-    
-    info!("🔄 Starting WebSocket Server on {}:{} (WS)...", ws_host, ws_port);
-    if let Err(e) = run_ws_server(&ws_host, ws_port, matchmaker_for_ws).await {
+    info!("🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...");
+    if let Err(e) = run_ws_server(matchmaker.clone()).await {
         error!("WebSocket server error: {}", e);
     }
 }

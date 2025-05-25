@@ -32,6 +32,11 @@ use crate::buyer_stats::{
     format_buyer_stats
 };
 
+use crate::seller_stats::{
+    SellerStatsManager,
+    format_seller_stats
+};
+
 #[cfg(test)]
 mod tests;
 
@@ -47,14 +52,15 @@ pub async fn run_ws_server(
     api_url: &str,
     matchmaker: SharedMatchMaker,
     connections: &NodeConnections,
-    buyer_stats_manager: BuyerStatsManager
+    buyer_stats_manager: BuyerStatsManager,
+    seller_stats_manager: SellerStatsManager
 ) -> Result<()> {
     // Create the VM manager
     let vm_base_path = std::env::var("VM_BASE_PATH").unwrap_or_else(|_| "/tmp/lumaris/vms".to_string());
     let vm_manager = VmManager::new(&vm_base_path, api_url);
     
     // Create the WebSocket handler
-    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone(), vm_manager, buyer_stats_manager);
+    let ws_route = create_ws_handler(api_url, matchmaker.clone(), connections.clone(), vm_manager, buyer_stats_manager, seller_stats_manager);
     
     // Create a health check route
     let health_route = warp::path("health")
@@ -80,7 +86,8 @@ async fn handle_websocket_connection(
     _rx: broadcast::Receiver<String>,
     connections: NodeConnections,
     vm_manager: VmManager,
-    buyer_stats_manager: BuyerStatsManager
+    buyer_stats_manager: BuyerStatsManager,
+    seller_stats_manager: SellerStatsManager
 ) {
     // Split the WebSocket into a sender and receiver
     let (mut ws_sender, mut ws_receiver) = ws.split();
@@ -109,6 +116,7 @@ async fn handle_websocket_connection(
     let api_url_clone = api_url.clone();
     let vm_manager_clone = vm_manager.clone();
     let buyer_stats_manager_clone = buyer_stats_manager.clone();
+    let seller_stats_manager_clone = seller_stats_manager.clone();
     
     // Task to forward messages from the channel to the WebSocket
     let ws_sender_task = tokio::spawn(async move {
@@ -126,6 +134,7 @@ async fn handle_websocket_connection(
         let api_url_clone = api_url_clone.clone();
         let vm_manager_clone = vm_manager_clone.clone();
         let buyer_stats_manager_clone = buyer_stats_manager_clone.clone();
+        let seller_stats_manager_clone = seller_stats_manager_clone.clone();
         async move {
             while let Some(result) = ws_receiver.next().await {
                 match result {
@@ -147,7 +156,8 @@ async fn handle_websocket_connection(
                             &connections_clone, 
                             &ws_sender_tx,
                             &vm_manager_clone,
-                            &buyer_stats_manager_clone
+                            &buyer_stats_manager_clone,
+                            &seller_stats_manager_clone
                         ).await {
                             error!("Error processing message: {}", e);
                             
@@ -210,7 +220,8 @@ pub async fn process_message(
     connections: &Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
     ws_sender_tx: &tokio::sync::mpsc::UnboundedSender<Message>,
     vm_manager: &VmManager,
-    buyer_stats_manager: &BuyerStatsManager
+    buyer_stats_manager: &BuyerStatsManager,
+    seller_stats_manager: &SellerStatsManager
 ) -> WsResult<()> {
     // Parse the message as JSON
     let parsed: Value = serde_json::from_str(message)?;
@@ -222,43 +233,50 @@ pub async fn process_message(
                 info!("Node registration from: {}", peer_id);
                 
                 // Extract node capabilities
-                let cpu_cores = parsed["capabilities"]["cpu_cores"].as_f64().unwrap_or(1.0) as f32;
-                let memory_mb = parsed["capabilities"]["memory_mb"].as_u64().unwrap_or(1024);
-                
-                let node = NodeCapabilities {
-                    node_id: peer_id.to_string(),
-                    cpu_cores,
-                    memory_mb,
-                    available: true,
-                    reliability_score: 1.0, // Default for new nodes
-                    last_updated: Utc::now().timestamp() as u64,
-                };
-                
-                // Register the node with the matchmaker
-                {
+                if let Some(capabilities) = parsed.get("capabilities") {
+                    let cpu_cores = capabilities.get("cpu_cores").and_then(|c| c.as_f64()).unwrap_or(0.0) as f32;
+                    let memory_mb = capabilities.get("memory_mb").and_then(|m| m.as_u64()).unwrap_or(0);
+                    
+                    info!("{} {} {} {} {} {}", 
+                        "Node".green(), 
+                        peer_id.bright_yellow(), 
+                        "registered with".green(), 
+                        cpu_cores.to_string().bright_white(), 
+                        "CPU cores and".green(), 
+                        format!("{} MB", memory_mb).bright_white()
+                    );
+                    
+                    // Register node with matchmaker
+                    let node_capabilities = NodeCapabilities {
+                        node_id: peer_id.to_string(),
+                        cpu_cores,
+                        memory_mb,
+                    };
+                    
                     let mut mm = matchmaker.lock().await;
-                    mm.update_node(node.clone());
-                }
-                
-                // Update node availability in the API
-                let node_id_copy = peer_id.to_string();
-                let api_url_copy = api_url.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = update_node_availability(&api_url_copy, &node_id_copy, true).await {
+                    mm.register_node(node_capabilities);
+                    
+                    // Extract seller ID if provided
+                    if let Some(seller_id) = parsed.get("seller_id").and_then(|s| s.as_str()) {
+                        // Record node registration in seller stats
+                        seller_stats_manager.record_node_registration(seller_id, peer_id, cpu_cores, memory_mb).await;
+                    }
+                    
+                    // Send registration confirmation
+                    let response = json!({
+                        "type": "node_registered",
+                        "node_id": peer_id,
+                        "status": "registered"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                        error!("Error sending registration confirmation: {}", e);
+                    }
+                    
+                    // Update node availability in API
+                    if let Err(e) = update_node_availability(api_url, peer_id, true).await {
                         error!("Failed to update node availability in API: {}", e);
                     }
-                });
-                
-                // Send a confirmation message back through the WebSocket
-                let response = json!({
-                    "type": "registration_confirmation",
-                    "node_id": peer_id,
-                    "status": "registered"
-                }).to_string();
-                
-                // Send the response directly to the WebSocket
-                if let Err(e) = ws_sender_tx.send(Message::text(response)) {
-                    error!("Error sending registration confirmation: {}", e);
                 }
             },
             "node_status" => {
@@ -329,6 +347,9 @@ pub async fn process_message(
                 ) {
                     info!("{} {} {}", "Creating VM for job".green(), job_id.to_string().bright_yellow(), format!("(buyer: {})", buyer_id).bright_cyan());
                     
+                    // Extract seller ID if provided
+                    let seller_id = parsed.get("seller_id").and_then(|s| s.as_str()).unwrap_or("unknown");
+                    
                     // Create VM
                     match vm_manager.create_vm(job_id, buyer_id, vcpu_count, mem_size_mib).await {
                         Ok(vm_id) => {
@@ -336,6 +357,11 @@ pub async fn process_message(
                             
                             // Record VM creation in buyer stats
                             buyer_stats_manager.record_vm_creation(&vm_id, job_id, buyer_id, vcpu_count, mem_size_mib).await;
+                            
+                            // Record VM hosting in seller stats
+                            if seller_id != "unknown" {
+                                seller_stats_manager.record_vm_hosting(seller_id, peer_id, &vm_id, job_id, buyer_id, vcpu_count, mem_size_mib).await;
+                            }
                             
                             // Send VM creation confirmation
                             let response = json!({
@@ -437,6 +463,9 @@ pub async fn process_message(
                         Err(_) => "unknown".to_string(),
                     };
                     
+                    // Extract seller ID if provided
+                    let seller_id = parsed.get("seller_id").and_then(|s| s.as_str()).unwrap_or("unknown");
+                    
                     // Terminate VM
                     match vm_manager.terminate_vm(vm_id).await {
                         Ok(_) => {
@@ -444,6 +473,11 @@ pub async fn process_message(
                             
                             // Record VM termination in buyer stats
                             buyer_stats_manager.record_vm_termination(vm_id, &buyer_id).await;
+                            
+                            // Record VM termination in seller stats
+                            if seller_id != "unknown" {
+                                seller_stats_manager.record_vm_termination(seller_id, vm_id).await;
+                            }
                             
                             // Send VM termination confirmation
                             let response = json!({
@@ -641,6 +675,106 @@ pub async fn process_message(
                     }
                 }
             },
+            "get_seller_stats" => {
+                // Extract seller ID
+                if let Some(seller_id) = parsed.get("seller_id").and_then(|s| s.as_str()) {
+                    info!("{} {}", "Getting stats for seller:".cyan(), seller_id.bright_cyan());
+                    
+                    // Get seller stats
+                    match seller_stats_manager.get_seller_stats(seller_id).await {
+                        Some(stats) => {
+                            // Format seller stats
+                            let formatted_stats = format_seller_stats(&stats);
+                            
+                            // Send seller stats
+                            let response = json!({
+                                "type": "seller_stats",
+                                "seller_id": seller_id,
+                                "stats": {
+                                    "session_start": stats.session_start.to_rfc3339(),
+                                    "active_nodes": stats.active_nodes,
+                                    "total_nodes": stats.total_nodes,
+                                    "active_vms": stats.active_vms,
+                                    "total_vms_hosted": stats.total_vms_hosted,
+                                    "total_earnings": stats.total_earnings,
+                                    "total_cpu_cores": stats.total_cpu_cores,
+                                    "total_memory_mb": stats.total_memory_mb,
+                                    "nodes": stats.nodes,
+                                    "buyer_distribution": stats.buyer_distribution,
+                                    "formatted_stats": formatted_stats
+                                }
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending seller stats: {}", e);
+                            }
+                        },
+                        None => {
+                            // Send empty stats
+                            let response = json!({
+                                "type": "seller_stats",
+                                "seller_id": seller_id,
+                                "stats": {
+                                    "session_start": Utc::now().to_rfc3339(),
+                                    "active_nodes": 0,
+                                    "total_nodes": 0,
+                                    "active_vms": 0,
+                                    "total_vms_hosted": 0,
+                                    "total_earnings": 0.0,
+                                    "total_cpu_cores": 0.0,
+                                    "total_memory_mb": 0,
+                                    "nodes": {},
+                                    "buyer_distribution": {},
+                                    "formatted_stats": format!("No stats available for seller {}", seller_id)
+                                }
+                            }).to_string();
+                            
+                            if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                                error!("Error sending empty seller stats: {}", e);
+                            }
+                        }
+                    }
+                } else {
+                    // Send error response for missing seller ID
+                    let error_response = json!({
+                        "type": "error",
+                        "message": "Missing seller ID for seller stats"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(error_response)) {
+                        error!("Error sending parameter error: {}", e);
+                    }
+                }
+            },
+            "node_disconnection" => {
+                // Extract seller ID
+                if let Some(seller_id) = parsed.get("seller_id").and_then(|s| s.as_str()) {
+                    info!("{} {} {}", "Node".yellow(), peer_id.bright_yellow(), "disconnecting".yellow());
+                    
+                    // Record node disconnection in seller stats
+                    seller_stats_manager.record_node_disconnection(seller_id, peer_id).await;
+                    
+                    // Update node availability in matchmaker
+                    let mut mm = matchmaker.lock().await;
+                    mm.set_node_availability(peer_id, false);
+                    
+                    // Update node availability in API
+                    if let Err(e) = update_node_availability(api_url, peer_id, false).await {
+                        error!("Failed to update node availability in API: {}", e);
+                    }
+                    
+                    // Send disconnection confirmation
+                    let response = json!({
+                        "type": "node_disconnected",
+                        "node_id": peer_id,
+                        "status": "disconnected"
+                    }).to_string();
+                    
+                    if let Err(e) = ws_sender_tx.send(Message::text(response)) {
+                        error!("Error sending disconnection confirmation: {}", e);
+                    }
+                }
+            },
             _ => {
                 info!("Unknown message type: {}", msg_type);
             }
@@ -680,7 +814,8 @@ pub fn create_ws_handler(
     matchmaker: SharedMatchMaker,
     connections: NodeConnections,
     vm_manager: VmManager,
-    buyer_stats_manager: BuyerStatsManager
+    buyer_stats_manager: BuyerStatsManager,
+    seller_stats_manager: SellerStatsManager
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
     // Create a broadcast channel for sending messages to all connected clients
     let (tx, _rx) = broadcast::channel::<String>(100);
@@ -697,7 +832,8 @@ pub fn create_ws_handler(
         .and(with_connections(connections))
         .and(with_vm_manager(vm_manager))
         .and(with_buyer_stats_manager(buyer_stats_manager))
-        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections, vm_manager: VmManager, buyer_stats_manager: BuyerStatsManager| {
+        .and(with_seller_stats_manager(seller_stats_manager))
+        .map(move |ws: warp::ws::Ws, api_url: String, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>, connections: NodeConnections, vm_manager: VmManager, buyer_stats_manager: BuyerStatsManager, seller_stats_manager: SellerStatsManager| {
             // Clone tx for the closure
             let tx_clone = tx.clone();
             
@@ -708,7 +844,7 @@ pub fn create_ws_handler(
                 // Handle the WebSocket connection
                 // Return a future that resolves to ()
                 async move {
-                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections, vm_manager, buyer_stats_manager).await;
+                    handle_websocket_connection(socket, api_url, matchmaker, rx, connections, vm_manager, buyer_stats_manager, seller_stats_manager).await;
                 }
             })
         })
@@ -742,4 +878,9 @@ fn with_vm_manager(vm_manager: VmManager) -> impl Filter<Extract = (VmManager,),
 // Helper function to pass the buyer stats manager to the handler
 fn with_buyer_stats_manager(buyer_stats_manager: BuyerStatsManager) -> impl Filter<Extract = (BuyerStatsManager,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || buyer_stats_manager.clone())
+}
+
+// Helper function to pass the seller stats manager to the handler
+fn with_seller_stats_manager(seller_stats_manager: SellerStatsManager) -> impl Filter<Extract = (SellerStatsManager,), Error = std::convert::Infallible> + Clone {
+    warp::any().map(move || seller_stats_manager.clone())
 }

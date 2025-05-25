@@ -8,6 +8,7 @@ use serde_json::json;
 use crate::matchmaker::create_matchmaker;
 use crate::vm_manager::VmManager;
 use crate::buyer_stats::BuyerStatsManager;
+use crate::seller_stats::SellerStatsManager;
 use tempfile::tempdir;
 
 // Helper function to create a test WebSocket message
@@ -46,13 +47,17 @@ fn test_process_node_registration() {
         // Create buyer stats manager
         let buyer_stats_manager = BuyerStatsManager::new();
         
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
+        
         // Create a node registration message
         let message = json!({
             "type": "node_registration",
             "capabilities": {
                 "cpu_cores": 4,
                 "memory_mb": 8192
-            }
+            },
+            "seller_id": "test-seller"
         }).to_string();
         
         // Process the message
@@ -64,7 +69,8 @@ fn test_process_node_registration() {
             &connections,
             &tx,
             &vm_manager,
-            &buyer_stats_manager
+            &buyer_stats_manager,
+            &seller_stats_manager
         ).await;
         
         // Check that the message was processed successfully
@@ -79,6 +85,15 @@ fn test_process_node_registration() {
         assert_eq!(nodes[0].cpu_cores, 4.0);
         assert_eq!(nodes[0].memory_mb, 8192);
         assert!(nodes[0].available);
+        
+        // Check that seller stats were updated
+        let seller_stats = seller_stats_manager.get_seller_stats("test-seller").await;
+        assert!(seller_stats.is_some());
+        let stats = seller_stats.unwrap();
+        assert_eq!(stats.active_nodes, 1);
+        assert_eq!(stats.total_nodes, 1);
+        assert_eq!(stats.total_cpu_cores, 4.0);
+        assert_eq!(stats.total_memory_mb, 8192);
     });
 }
 
@@ -100,13 +115,20 @@ fn test_process_vm_creation() {
         // Create buyer stats manager
         let buyer_stats_manager = BuyerStatsManager::new();
         
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
+        
+        // Register a node with seller stats
+        seller_stats_manager.record_node_registration("test-seller", "test-node-id", 4.0, 8192).await;
+        
         // Create a VM creation message
         let message = json!({
             "type": "create_vm",
             "job_id": 123,
             "buyer_id": "test-buyer",
             "vcpu_count": 2,
-            "mem_size_mib": 1024
+            "mem_size_mib": 1024,
+            "seller_id": "test-seller"
         }).to_string();
         
         // Process the message
@@ -118,7 +140,8 @@ fn test_process_vm_creation() {
             &connections,
             &tx,
             &vm_manager,
-            &buyer_stats_manager
+            &buyer_stats_manager,
+            &seller_stats_manager
         ).await;
         
         // Check that the message was processed successfully
@@ -149,6 +172,13 @@ fn test_process_vm_creation() {
         let stats = buyer_stats.unwrap();
         assert_eq!(stats.active_vms, 1);
         assert_eq!(stats.total_vms_spawned, 1);
+        
+        // Check that seller stats were updated
+        let seller_stats = seller_stats_manager.get_seller_stats("test-seller").await;
+        assert!(seller_stats.is_some());
+        let stats = seller_stats.unwrap();
+        assert_eq!(stats.active_vms, 1);
+        assert_eq!(stats.total_vms_hosted, 1);
     });
 }
 
@@ -169,6 +199,9 @@ fn test_process_vm_status_request() {
         
         // Create buyer stats manager
         let buyer_stats_manager = BuyerStatsManager::new();
+        
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
         
         // Create a VM
         let vm_id = vm_manager.create_vm(123, "test-buyer", 2, 1024).await.unwrap();
@@ -191,7 +224,8 @@ fn test_process_vm_status_request() {
             &connections,
             &tx,
             &vm_manager,
-            &buyer_stats_manager
+            &buyer_stats_manager,
+            &seller_stats_manager
         ).await;
         
         // Check that the message was processed successfully
@@ -228,6 +262,9 @@ fn test_process_buyer_vms_request() {
         // Create buyer stats manager
         let buyer_stats_manager = BuyerStatsManager::new();
         
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
+        
         // Create VMs for different buyers
         let vm_id1 = vm_manager.create_vm(123, "buyer-1", 2, 1024).await.unwrap();
         let vm_id2 = vm_manager.create_vm(124, "buyer-1", 4, 2048).await.unwrap();
@@ -253,7 +290,8 @@ fn test_process_buyer_vms_request() {
             &connections,
             &tx,
             &vm_manager,
-            &buyer_stats_manager
+            &buyer_stats_manager,
+            &seller_stats_manager
         ).await;
         
         // Check that the message was processed successfully
@@ -291,6 +329,9 @@ fn test_process_buyer_stats_request() {
         // Create buyer stats manager
         let buyer_stats_manager = BuyerStatsManager::new();
         
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
+        
         // Create VMs for a buyer
         let vm_id1 = vm_manager.create_vm(123, "test-buyer", 2, 1024).await.unwrap();
         let vm_id2 = vm_manager.create_vm(124, "test-buyer", 4, 2048).await.unwrap();
@@ -318,7 +359,8 @@ fn test_process_buyer_stats_request() {
             &connections,
             &tx,
             &vm_manager,
-            &buyer_stats_manager
+            &buyer_stats_manager,
+            &seller_stats_manager
         ).await;
         
         // Check that the message was processed successfully
@@ -336,6 +378,83 @@ fn test_process_buyer_stats_request() {
         let stats = &response_json["stats"];
         assert_eq!(stats["active_vms"], 1);
         assert_eq!(stats["total_vms_spawned"], 2);
+        assert!(stats["formatted_stats"].is_string());
+    });
+}
+
+// Test processing a seller stats request
+#[test]
+fn test_process_seller_stats_request() {
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async {
+        // Create test components
+        let matchmaker = create_matchmaker();
+        let connections: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+        
+        // Create a temporary directory for VM files
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let vm_base_path = temp_dir.path().to_str().unwrap();
+        let vm_manager = VmManager::new(vm_base_path, "http://localhost:8000");
+        
+        // Create buyer stats manager
+        let buyer_stats_manager = BuyerStatsManager::new();
+        
+        // Create seller stats manager
+        let seller_stats_manager = SellerStatsManager::new();
+        
+        // Register nodes for a seller
+        seller_stats_manager.record_node_registration("test-seller", "node1", 4.0, 8192).await;
+        seller_stats_manager.record_node_registration("test-seller", "node2", 8.0, 16384).await;
+        
+        // Create VMs for the seller
+        let vm_id1 = vm_manager.create_vm(123, "buyer1", 2, 1024).await.unwrap();
+        let vm_id2 = vm_manager.create_vm(124, "buyer2", 4, 2048).await.unwrap();
+        
+        // Record VM hosting in seller stats
+        seller_stats_manager.record_vm_hosting("test-seller", "node1", &vm_id1, 123, "buyer1", 2, 1024).await;
+        seller_stats_manager.record_vm_hosting("test-seller", "node2", &vm_id2, 124, "buyer2", 4, 2048).await;
+        
+        // Terminate one VM
+        vm_manager.terminate_vm(&vm_id1).await.unwrap();
+        seller_stats_manager.record_vm_termination("test-seller", &vm_id1).await;
+        
+        // Create a seller stats request message
+        let message = json!({
+            "type": "get_seller_stats",
+            "seller_id": "test-seller"
+        }).to_string();
+        
+        // Process the message
+        let result = process_message(
+            &message,
+            "test-node-id",
+            "http://localhost:8000",
+            &matchmaker,
+            &connections,
+            &tx,
+            &vm_manager,
+            &buyer_stats_manager,
+            &seller_stats_manager
+        ).await;
+        
+        // Check that the message was processed successfully
+        assert!(result.is_ok());
+        
+        // Check that a response was sent
+        let response = rx.try_recv().unwrap();
+        let response_text = response.to_str().unwrap();
+        let response_json: serde_json::Value = serde_json::from_str(response_text).unwrap();
+        
+        assert_eq!(response_json["type"], "seller_stats");
+        assert_eq!(response_json["seller_id"], "test-seller");
+        assert!(response_json["stats"].is_object());
+        
+        let stats = &response_json["stats"];
+        assert_eq!(stats["active_nodes"], 2);
+        assert_eq!(stats["total_nodes"], 2);
+        assert_eq!(stats["active_vms"], 1);
+        assert_eq!(stats["total_vms_hosted"], 2);
         assert!(stats["formatted_stats"].is_string());
     });
 }

@@ -3,6 +3,7 @@ mod matchmaker;
 mod ws_handler;
 mod vm_manager;
 mod buyer_stats;
+mod seller_stats;
 
 use log::{info, error};
 use dotenv::dotenv;
@@ -18,6 +19,7 @@ use ws_handler::run_ws_server;
 use matchmaker::create_matchmaker;
 use vm_manager::VmManager;
 use buyer_stats::BuyerStatsManager;
+use seller_stats::SellerStatsManager;
 
 #[tokio::main]
 async fn main() {
@@ -61,6 +63,10 @@ async fn main() {
     let buyer_stats_manager = BuyerStatsManager::new();
     info!("{}", "✓ Buyer Statistics Manager initialized".green());
     
+    // Create the seller statistics manager
+    let seller_stats_manager = SellerStatsManager::new();
+    info!("{}", "✓ Seller Statistics Manager initialized".green());
+    
     // Wait for API to be ready
     info!("{}", "Waiting for API to be ready...".bright_cyan());
     let mut api_ready = false;
@@ -88,8 +94,7 @@ async fn main() {
     // Start WebSocket server for node connections
     info!("{}", "🔄 Starting WebSocket Server on 0.0.0.0:3030 (WS)...".bright_green().bold());
     let connections: Arc<Mutex<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>> = Arc::new(Mutex::new(HashMap::new()));
-    if let Err(e) = run_ws_server("0.0.0.0:3030", &api_url, matchmaker.clone(), &connections, buyer_stats_manager).await {
+    if let Err(e) = run_ws_server("0.0.0.0:3030", &api_url, matchmaker.clone(), &connections, buyer_stats_manager, seller_stats_manager).await {
         error!("{} {}", "WebSocket server error:".red().bold(), e);
     }
 }
-

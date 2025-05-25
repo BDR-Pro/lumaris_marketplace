@@ -46,7 +46,7 @@ async fn main() {
     info!("Configuration loaded from: {}", config_path);
     
     // Create the matchmaker
-    let (matchmaker, _matchmaker_rx) = create_matchmaker();
+    let (matchmaker, _) = create_matchmaker();
     info!("✅ Matchmaker initialized");
     
     // Start WebSocket server for node connections

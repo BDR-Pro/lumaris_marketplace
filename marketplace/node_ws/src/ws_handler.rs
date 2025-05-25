@@ -114,7 +114,7 @@ async fn handle_tcp_connection(
                 Ok(msg) => {
                     match msg {
                         Message::Text(text) => {
-                            process_message(&text, &peer_id, &matchmaker).await?;
+                            process_message(&text, &peer_id, &matchmaker, &connections).await?;
                         }
                         Message::Close(_) => {
                             info!("Connection closed by client: {}", peer_id);
@@ -173,7 +173,7 @@ async fn handle_tcp_connection(
 }
 
 // Handle a WebSocket connection
-async fn handle_websocket(
+async fn handle_websocket_connection(
     socket: warp::ws::WebSocket,
     matchmaker: SharedMatchMaker,
     mut rx: broadcast::Receiver<String>
@@ -275,98 +275,51 @@ async fn handle_websocket(
 async fn process_message(
     message: &str,
     peer_id: &str,
-    matchmaker: &SharedMatchMaker
-) -> Result<()> {
-    // Parse the message
-    let parsed: Value = serde_json::from_str(message)
-        .map_err(|e| NodeError::SerializationError(e))?;
+    matchmaker: &SharedMatchMaker,
+    connections: &NodeConnections
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Parse the message as JSON
+    let parsed: Value = serde_json::from_str(message)?;
     
-    // Extract message type
-    let msg_type = parsed["type"].as_str().unwrap_or("unknown");
-    
-    match msg_type {
-        "node_registration" => {
-            info!("Node registration from: {}", peer_id);
-            
-            // Extract node capabilities
-            let cpu_cores = parsed["capabilities"]["cpu_cores"].as_f64().unwrap_or(1.0) as f32;
-            let memory_mb = parsed["capabilities"]["memory_mb"].as_u64().unwrap_or(1024);
-            
-            let node = NodeCapabilities {
-                node_id: peer_id.to_string(),
-                cpu_cores,
-                memory_mb,
-                available: true,
-                reliability_score: 1.0, // Default for new nodes
-                last_updated: Utc::now().timestamp() as u64,
-            };
-            
-            // Register the node with the matchmaker
-            {
-                let mut matchmaker = matchmaker.lock().unwrap();
-                matchmaker.update_node(node.clone());
-            }
-            
-            // Update node availability in the API
-            let peer_id_clone = peer_id.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = update_node_availability("http://localhost:8000", &peer_id_clone, true).await {
-                    error!("Failed to update node availability: {:?}", e);
+    // Process the message based on its type
+    if let Some(msg_type) = parsed.get("type").and_then(|t| t.as_str()) {
+        match msg_type {
+            "node_registration" => {
+                info!("Node registration from: {}", peer_id);
+                
+                // Extract node capabilities
+                let cpu_cores = parsed["capabilities"]["cpu_cores"].as_f64().unwrap_or(1.0) as f32;
+                let memory_mb = parsed["capabilities"]["memory_mb"].as_u64().unwrap_or(1024);
+                
+                let node = NodeCapabilities {
+                    node_id: peer_id.to_string(),
+                    cpu_cores,
+                    memory_mb,
+                    available: true,
+                    reliability_score: 1.0, // Default for new nodes
+                    last_updated: Utc::now().timestamp() as u64,
+                };
+                
+                // Register the node with the matchmaker
+                {
+                    let mut mm = matchmaker.lock().unwrap();
+                    mm.register_node(node.clone());
                 }
-            });
-        }
-        "node_status" => {
-            // Update node status
-            let cpu_usage = parsed["status"]["cpu_usage"].as_f64().unwrap_or(0.0) as f32;
-            let memory_usage = parsed["status"]["memory_usage"].as_f64().unwrap_or(0.0) as f32;
-            let available = parsed["status"]["available"].and_then(|a| a.as_bool()).unwrap_or(true);
-            
-            {
-                let mut matchmaker = matchmaker.lock().unwrap();
-                if let Some(node) = matchmaker.get_node_by_id_mut(peer_id) {
-                    // Update node capabilities based on current usage
-                    node.available = available;
-                    node.last_updated = Utc::now().timestamp() as u64;
-                    
-                    debug!("Updated node {} status: CPU {}%, Memory {}%, Available: {}", 
-                        peer_id, cpu_usage, memory_usage, available);
+            },
+            "job_status_update" => {
+                // Extract job ID and status
+                if let (Some(job_id), Some(status)) = (
+                    parsed.get("job_id").and_then(|j| j.as_u64()),
+                    parsed.get("status").and_then(|s| s.as_str())
+                ) {
+                    // Update job status
+                    let mut mm = matchmaker.lock().unwrap();
+                    let _ = mm.update_job_status(job_id, status.to_string());
                 }
+            },
+            _ => {
+                debug!("Unknown message type: {}", msg_type);
             }
-        }
-        "job_status" => {
-            // Update job status
-            let job_id = parsed["job_id"].as_u64().unwrap_or(0);
-            let status_str = parsed["status"].as_str().unwrap_or("unknown");
-            
-            let status = match status_str {
-                "queued" => JobStatus::Queued,
-                "matching" => JobStatus::Matching,
-                "assigned" => JobStatus::Assigned,
-                "running" => JobStatus::Running,
-                "completed" => JobStatus::Completed,
-                "failed" => JobStatus::Failed,
-                _ => JobStatus::Failed,
-            };
-            
-            // Extract result data if available
-            let result_data = parsed.get("result").cloned();
-            
-            {
-                let mut matchmaker = matchmaker.lock().unwrap();
-                matchmaker.update_job_status(job_id, status.clone());
-            }
-            
-            // Update job status in the API
-            let job_id_copy = job_id;
-            let status_str_copy = status_str.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = update_job_status("http://localhost:8000", job_id_copy, &status_str_copy, result_data).await {
-                    error!("Failed to update job status: {:?}", e);
-                }
-            });
-        }
-        _ => {
-            debug!("Unknown message type: {}", msg_type);
         }
     }
     
@@ -426,7 +379,7 @@ pub fn create_ws_handler(matchmaker: SharedMatchMaker) -> impl Filter<Extract = 
         .map(|ws: warp::ws::Ws, matchmaker: SharedMatchMaker, tx: broadcast::Sender<String>| {
             ws.on_upgrade(move |socket| {
                 let rx = tx.subscribe();
-                handle_websocket(socket, matchmaker, rx)
+                handle_websocket_connection(socket, matchmaker, rx)
             })
         })
 }

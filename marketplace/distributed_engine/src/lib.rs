@@ -213,15 +213,15 @@ impl JobSplitter for DefaultJobSplitter {
             let chunk_data = lines[start..end].join("\n");
             
             let chunk_payload = JobPayload {
-                command: job_data.payload.command.clone(),
-                args: job_data.payload.args.clone(),
+                command: "process".to_string(),
+                args: vec![],
                 input_data: Some(chunk_data),
-                env_vars: job_data.payload.env_vars.clone(),
+                env_vars: HashMap::new(),
             };
             
             let chunk = JobChunk {
                 chunk_id: (i + 1) as u64,
-                parent_job_id: job_data.job_id,
+                parent_job_id: job_id,
                 payload: chunk_payload,
                 dependencies: Vec::new(),
                 estimated_work_units: (end - start) as u64,

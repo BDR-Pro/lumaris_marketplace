@@ -11,6 +11,7 @@ dependencies:
   - requests
   - pandas
   - numpy
+  - pytest
   - pytest-cov
   - pip:
     - fastapi
@@ -19,9 +20,17 @@ dependencies:
     - httpx
     - black
     - flake8
-    - pytest
     - sqlalchemy 
     - pydantic
     - pytest-cov
     - python-multipart
-
+    - django==4.2.7
+    - django-crispy-forms==2.0
+    - crispy-bootstrap5==0.7
+    - python-dotenv==1.0.0
+    - websockets==11.0.3
+    - whitenoise==6.5.0
+    - django-htmx==1.16.0
+    - django-cors-headers==4.2.0
+    - djangorestframework==3.14.0
+    - psycopg2-binary==2.9.7

@@ -1,0 +1,26 @@
+{% if vms %}
+    {% for vm in vms %}
+    <tr>
+        <td><a href="{% url 'marketplace_monitor:vm_detail' vm.vm_id %}">{{ vm.vm_id }}</a></td>
+        <td>{{ vm.buyer_id }}</td>
+        <td>
+            <span class="status-badge 
+                {% if vm.status == 'running' %}status-running
+                {% elif vm.status == 'stopped' %}status-stopped
+                {% elif vm.status == 'creating' %}status-creating
+                {% elif vm.status == 'terminated' %}status-terminated
+                {% endif %}">
+                {{ vm.status }}
+            </span>
+        </td>
+        <td>{{ vm.vcpu_count }}</td>
+        <td>{{ vm.memory_mb }} MB</td>
+        <td>{{ vm.created_at|date:"M d, Y H:i" }}</td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="6" class="text-center">No VMs found</td>
+    </tr>
+{% endif %}
+

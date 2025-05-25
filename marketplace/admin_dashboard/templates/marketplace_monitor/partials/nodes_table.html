@@ -1,0 +1,20 @@
+{% if nodes %}
+    {% for node in nodes %}
+    <tr>
+        <td><a href="{% url 'marketplace_monitor:node_detail' node.node_id %}">{{ node.node_id }}</a></td>
+        <td>
+            <span class="status-badge {% if node.status == 'online' %}status-online{% else %}status-offline{% endif %}">
+                {{ node.status }}
+            </span>
+        </td>
+        <td>{{ node.cpu_cores }} cores</td>
+        <td>{{ node.memory_mb }} MB</td>
+        <td>{{ node.last_seen|date:"M d, Y H:i" }}</td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="5" class="text-center">No nodes found</td>
+    </tr>
+{% endif %}
+

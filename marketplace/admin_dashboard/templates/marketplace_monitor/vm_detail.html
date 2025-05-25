@@ -1,0 +1,277 @@
+{% extends 'marketplace_monitor/base.html' %}
+
+{% block content %}
+<div class="row">
+    <!-- VM Info Card -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-desktop"></i> VM Information
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>VM ID:</strong> {{ vm.vm_id }}
+                </div>
+                <div class="mb-3">
+                    <strong>Job ID:</strong> {{ vm.job_id }}
+                </div>
+                <div class="mb-3">
+                    <strong>Buyer ID:</strong> {{ vm.buyer_id }}
+                </div>
+                <div class="mb-3">
+                    <strong>Node:</strong>
+                    {% if vm.node %}
+                        <a href="{% url 'marketplace_monitor:node_detail' vm.node.node_id %}">{{ vm.node.node_id }}</a>
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </div>
+                <div class="mb-3">
+                    <strong>Status:</strong>
+                    <span class="status-badge 
+                        {% if vm.status == 'running' %}status-running
+                        {% elif vm.status == 'stopped' %}status-stopped
+                        {% elif vm.status == 'creating' %}status-creating
+                        {% elif vm.status == 'terminated' %}status-terminated
+                        {% endif %}">
+                        {{ vm.status }}
+                    </span>
+                </div>
+                <div class="mb-3">
+                    <strong>vCPU Count:</strong> {{ vm.vcpu_count }}
+                </div>
+                <div class="mb-3">
+                    <strong>Memory:</strong> {{ vm.memory_mb }} MB
+                </div>
+                <div class="mb-3">
+                    <strong>Created:</strong> {{ vm.created_at|date:"M d, Y H:i:s" }}
+                </div>
+                <div class="mb-3">
+                    <strong>Updated:</strong> {{ vm.updated_at|date:"M d, Y H:i:s" }}
+                </div>
+                {% if vm.terminated_at %}
+                <div class="mb-3">
+                    <strong>Terminated:</strong> {{ vm.terminated_at|date:"M d, Y H:i:s" }}
+                </div>
+                {% endif %}
+                <div class="d-grid gap-2">
+                    {% if vm.status == 'running' %}
+                    <button class="btn btn-warning" id="stopVmButton">
+                        <i class="fas fa-stop"></i> Stop VM
+                    </button>
+                    {% elif vm.status == 'stopped' %}
+                    <button class="btn btn-success" id="startVmButton">
+                        <i class="fas fa-play"></i> Start VM
+                    </button>
+                    {% endif %}
+                    
+                    {% if vm.status != 'terminated' %}
+                    <button class="btn btn-danger" id="terminateVmButton">
+                        <i class="fas fa-trash"></i> Terminate VM
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VM Metrics -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-line"></i> VM Metrics
+            </div>
+            <div class="card-body">
+                <ul class="nav nav-tabs" id="vmMetricsTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="cpu-tab" data-bs-toggle="tab" data-bs-target="#cpu" type="button" role="tab" aria-controls="cpu" aria-selected="true">CPU Usage</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="memory-tab" data-bs-toggle="tab" data-bs-target="#memory" type="button" role="tab" aria-controls="memory" aria-selected="false">Memory Usage</button>
+                    </li>
+                </ul>
+                <div class="tab-content p-3" id="vmMetricsTabContent">
+                    <div class="tab-pane fade show active" id="cpu" role="tabpanel" aria-labelledby="cpu-tab">
+                        <canvas id="cpuChart"></canvas>
+                    </div>
+                    <div class="tab-pane fade" id="memory" role="tabpanel" aria-labelledby="memory-tab">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VM Transactions -->
+    <div class="col-md-12 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-exchange-alt"></i> Transactions for this VM
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Transaction ID</th>
+                                <th>User</th>
+                                <th>Type</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Created</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% if transactions %}
+                                {% for transaction in transactions %}
+                                <tr>
+                                    <td>{{ transaction.transaction_id }}</td>
+                                    <td>{{ transaction.user_id }} ({{ transaction.user_type }})</td>
+                                    <td>
+                                        <span class="badge {% if transaction.transaction_type == 'payment' %}bg-danger{% elif transaction.transaction_type == 'refund' %}bg-warning{% elif transaction.transaction_type == 'deposit' %}bg-success{% else %}bg-info{% endif %}">
+                                            {{ transaction.transaction_type }}
+                                        </span>
+                                    </td>
+                                    <td>${{ transaction.amount }}</td>
+                                    <td>
+                                        <span class="badge {% if transaction.status == 'completed' %}bg-success{% elif transaction.status == 'pending' %}bg-warning{% else %}bg-danger{% endif %}">
+                                            {{ transaction.status }}
+                                        </span>
+                                    </td>
+                                    <td>{{ transaction.created_at|date:"M d, Y H:i" }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="6" class="text-center">No transactions found for this VM</td>
+                                </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Fetch VM metrics
+        fetch("{% url 'marketplace_monitor:api_vm_detail' vm.vm_id %}")
+            .then(response => response.json())
+            .then(data => {
+                // Create CPU chart
+                const cpuCtx = document.getElementById('cpuChart').getContext('2d');
+                const cpuChart = new Chart(cpuCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.cpu_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'CPU Usage (%)',
+                            data: data.cpu_metrics.map(item => item.value),
+                            borderColor: '#3498db',
+                            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'CPU Usage Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                max: 100
+                            }
+                        }
+                    }
+                });
+                
+                // Create memory chart
+                const memoryCtx = document.getElementById('memoryChart').getContext('2d');
+                const memoryChart = new Chart(memoryCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.memory_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'Memory Usage (MB)',
+                            data: data.memory_metrics.map(item => item.value),
+                            borderColor: '#2ecc71',
+                            backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Memory Usage Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching VM metrics:', error);
+            });
+        
+        // Start VM button click handler
+        const startVmButton = document.getElementById('startVmButton');
+        if (startVmButton) {
+            startVmButton.addEventListener('click', function() {
+                // Implement start VM functionality
+                alert('Start VM functionality will be implemented here.');
+            });
+        }
+        
+        // Stop VM button click handler
+        const stopVmButton = document.getElementById('stopVmButton');
+        if (stopVmButton) {
+            stopVmButton.addEventListener('click', function() {
+                // Implement stop VM functionality
+                alert('Stop VM functionality will be implemented here.');
+            });
+        }
+        
+        // Terminate VM button click handler
+        const terminateVmButton = document.getElementById('terminateVmButton');
+        if (terminateVmButton) {
+            terminateVmButton.addEventListener('click', function() {
+                if (confirm('Are you sure you want to terminate this VM? This action cannot be undone.')) {
+                    // Implement terminate VM functionality
+                    alert('Terminate VM functionality will be implemented here.');
+                }
+            });
+        }
+    });
+</script>
+{% endblock %}
+

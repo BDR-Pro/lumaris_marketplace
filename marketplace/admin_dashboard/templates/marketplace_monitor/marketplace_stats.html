@@ -1,0 +1,276 @@
+{% extends 'marketplace_monitor/base.html' %}
+
+{% block content %}
+<div class="row">
+    <!-- Stats Cards -->
+    <div class="col-md-12">
+        <div class="row" id="stats-cards" hx-get="{% url 'marketplace_monitor:htmx_marketplace_stats' %}" hx-trigger="load, every 30s">
+            <!-- This will be replaced by HTMX -->
+            <div class="col-md-4">
+                <div class="card stats-card">
+                    <div class="icon">
+                        <i class="fas fa-server"></i>
+                    </div>
+                    <div class="number">--</div>
+                    <div class="label">Active Nodes</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card">
+                    <div class="icon">
+                        <i class="fas fa-desktop"></i>
+                    </div>
+                    <div class="number">--</div>
+                    <div class="label">Active VMs</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card stats-card">
+                    <div class="icon">
+                        <i class="fas fa-dollar-sign"></i>
+                    </div>
+                    <div class="number">--</div>
+                    <div class="label">Total Volume</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Transaction Volume Chart -->
+    <div class="col-md-12 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-line"></i> Transaction Volume
+            </div>
+            <div class="card-body">
+                <canvas id="transactionVolumeChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Active Nodes and VMs Chart -->
+    <div class="col-md-12 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-line"></i> Active Nodes and VMs
+            </div>
+            <div class="card-body">
+                <canvas id="activeEntitiesChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Node Distribution Chart -->
+    <div class="col-md-6 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-pie"></i> Node Status Distribution
+            </div>
+            <div class="card-body">
+                <canvas id="nodeStatusChart"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <!-- VM Distribution Chart -->
+    <div class="col-md-6 mt-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-chart-pie"></i> VM Status Distribution
+            </div>
+            <div class="card-body">
+                <canvas id="vmStatusChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Fetch marketplace stats
+        fetch("{% url 'marketplace_monitor:api_marketplace_stats' %}")
+            .then(response => response.json())
+            .then(data => {
+                // Create transaction volume chart
+                const transactionVolumeCtx = document.getElementById('transactionVolumeChart').getContext('2d');
+                const transactionVolumeChart = new Chart(transactionVolumeCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.volume_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'Transaction Volume ($)',
+                            data: data.volume_metrics.map(item => item.value),
+                            borderColor: '#3498db',
+                            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Transaction Volume Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                
+                // Create active entities chart
+                const activeEntitiesCtx = document.getElementById('activeEntitiesChart').getContext('2d');
+                const activeEntitiesChart = new Chart(activeEntitiesCtx, {
+                    type: 'line',
+                    data: {
+                        labels: data.nodes_metrics.map(item => {
+                            const date = new Date(item.timestamp);
+                            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        }),
+                        datasets: [{
+                            label: 'Active Nodes',
+                            data: data.nodes_metrics.map(item => item.value),
+                            borderColor: '#2ecc71',
+                            backgroundColor: 'rgba(46, 204, 113, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }, {
+                            label: 'Active VMs',
+                            data: data.vms_metrics.map(item => item.value),
+                            borderColor: '#e74c3c',
+                            backgroundColor: 'rgba(231, 76, 60, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: 'Active Nodes and VMs Over Time'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+                
+                // Create node status distribution chart
+                fetch('/api/nodes/')
+                    .then(response => response.json())
+                    .then(nodes => {
+                        // Count nodes by status
+                        const nodeStatusCounts = {};
+                        nodes.forEach(node => {
+                            if (!nodeStatusCounts[node.status]) {
+                                nodeStatusCounts[node.status] = 0;
+                            }
+                            nodeStatusCounts[node.status]++;
+                        });
+                        
+                        // Create chart
+                        const nodeStatusCtx = document.getElementById('nodeStatusChart').getContext('2d');
+                        const nodeStatusChart = new Chart(nodeStatusCtx, {
+                            type: 'pie',
+                            data: {
+                                labels: Object.keys(nodeStatusCounts),
+                                datasets: [{
+                                    data: Object.values(nodeStatusCounts),
+                                    backgroundColor: [
+                                        '#2ecc71',  // online
+                                        '#e74c3c',  // offline
+                                        '#f39c12',  // other statuses
+                                        '#3498db',
+                                        '#9b59b6'
+                                    ]
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                plugins: {
+                                    legend: {
+                                        position: 'top',
+                                    },
+                                    title: {
+                                        display: true,
+                                        text: 'Node Status Distribution'
+                                    }
+                                }
+                            }
+                        });
+                    });
+                
+                // Create VM status distribution chart
+                fetch('/api/vms/')
+                    .then(response => response.json())
+                    .then(vms => {
+                        // Count VMs by status
+                        const vmStatusCounts = {};
+                        vms.forEach(vm => {
+                            if (!vmStatusCounts[vm.status]) {
+                                vmStatusCounts[vm.status] = 0;
+                            }
+                            vmStatusCounts[vm.status]++;
+                        });
+                        
+                        // Create chart
+                        const vmStatusCtx = document.getElementById('vmStatusChart').getContext('2d');
+                        const vmStatusChart = new Chart(vmStatusCtx, {
+                            type: 'pie',
+                            data: {
+                                labels: Object.keys(vmStatusCounts),
+                                datasets: [{
+                                    data: Object.values(vmStatusCounts),
+                                    backgroundColor: [
+                                        '#2ecc71',  // running
+                                        '#f39c12',  // stopped
+                                        '#3498db',  // creating
+                                        '#e74c3c',  // terminated
+                                        '#9b59b6'   // other statuses
+                                    ]
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                plugins: {
+                                    legend: {
+                                        position: 'top',
+                                    },
+                                    title: {
+                                        display: true,
+                                        text: 'VM Status Distribution'
+                                    }
+                                }
+                            }
+                        });
+                    });
+            })
+            .catch(error => {
+                console.error('Error fetching marketplace stats:', error);
+            });
+    });
+</script>
+{% endblock %}
+

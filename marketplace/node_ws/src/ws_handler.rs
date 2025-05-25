@@ -115,7 +115,7 @@ async fn handle_websocket_connection(
                                             let node_id_copy = peer_id.clone();
                                             tokio::spawn(async move {
                                                 if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, true).await {
-                                                    error!("Failed to update node availability: {:?}", e);
+                                                    error!("Failed to update node availability in API: {}", e);
                                                 }
                                             });
                                             
@@ -143,7 +143,7 @@ async fn handle_websocket_connection(
                                             let node_id_copy = peer_id.clone();
                                             tokio::spawn(async move {
                                                 if let Err(e) = update_node_availability("http://localhost:8000", &node_id_copy, available).await {
-                                                    error!("Failed to update node availability: {:?}", e);
+                                                    error!("Failed to update node availability in API: {}", e);
                                                 }
                                             });
                                         },

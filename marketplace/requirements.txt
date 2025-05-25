@@ -8,3 +8,5 @@ requests==2.32.3
 python-multipart>=0.0.18
 zipp>=3.19.1 # not directly required, pinned by Snyk to avoid a vulnerability
 python-multipart>=0.0.18
+rich==13.7.1  # Beautiful terminal formatting and output
+

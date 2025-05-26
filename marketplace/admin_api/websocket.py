@@ -6,6 +6,7 @@ from datetime import datetime
 
 from .auth import get_current_node_from_token
 from .models import Node
+from .metrics import increment_websocket_connections, decrement_websocket_connections
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,7 @@ class ConnectionManager:
         self.active_connections[node_id] = websocket
         self.last_heartbeat[node_id] = datetime.now()
         logger.info(f"Node {node_id} connected via WebSocket")
+        increment_websocket_connections()
     
     def disconnect(self, node_id: str):
         if node_id in self.active_connections:
@@ -31,6 +33,7 @@ class ConnectionManager:
         if node_id in self.last_heartbeat:
             del self.last_heartbeat[node_id]
         logger.info(f"Node {node_id} disconnected from WebSocket")
+        decrement_websocket_connections()
     
     async def send_message(self, node_id: str, message: Dict[str, Any]):
         if node_id in self.active_connections:
@@ -224,4 +227,3 @@ def is_node_connected(node_id: str) -> bool:
         bool: True if the node is connected, False otherwise
     """
     return manager.is_connected(node_id)
-

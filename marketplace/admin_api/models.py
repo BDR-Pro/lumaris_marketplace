@@ -71,3 +71,20 @@ class NodeCapability(Base):
     memory_mb = Column(Integer)
     reliability_score = Column(Float, default=1.0)
     last_seen_at = Column(DateTime, default=datetime.utcnow)
+
+
+class NodeReputation(Base):
+    """Tracks reputation metrics for compute nodes."""
+    
+    __tablename__ = "node_reputations"
+    
+    id = Column(Integer, primary_key=True)
+    node_id = Column(String, unique=True)
+    reputation_score = Column(Float, default=0.5)  # 0.0 to 1.0
+    successful_jobs = Column(Integer, default=0)
+    failed_jobs = Column(Integer, default=0)
+    total_uptime_hours = Column(Float, default=0.0)
+    avg_response_time_ms = Column(Float, default=0.0)
+    avg_job_completion_time_sec = Column(Float, default=0.0)
+    first_seen = Column(DateTime, nullable=True)
+    last_updated = Column(DateTime, default=datetime.utcnow)

@@ -5,13 +5,16 @@ import os
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from fastapi import FastAPI, WebSocket, Query
+from fastapi import FastAPI, WebSocket, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from functools import partial
 
 from . import models, schemas, nodes, jobs, matchmaking, auth
 from .database import engine, get_db
 from .websocket import handle_websocket
+from .rate_limiter import create_rate_limiter, rate_limit_middleware
+from .metrics import setup_metrics
 
 # Configure Rich console and logging
 console = Console()
@@ -25,6 +28,9 @@ log = logging.getLogger("admin_api")
 
 # Create database tables
 models.Base.metadata.create_all(bind=engine)
+
+# Create rate limiter
+rate_limiter = create_rate_limiter()
 
 # Create FastAPI app
 app = FastAPI(
@@ -57,6 +63,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add rate limiting middleware
+@app.middleware("http")
+async def rate_limiting(request: Request, call_next):
+    return await rate_limit_middleware(request, call_next, rate_limiter)
+
+# Setup Prometheus metrics
+setup_metrics(app)
 
 # Include routers
 app.include_router(nodes.router, prefix="/nodes", tags=["nodes"])

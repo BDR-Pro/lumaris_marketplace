@@ -16,6 +16,7 @@ from .database import engine, get_db
 from .websocket import handle_websocket, manager as websocket_manager
 from .rate_limiter import create_rate_limiter, rate_limit_middleware
 from .metrics import setup_metrics
+from .routes.reputation import router as reputation_router
 
 # Configure Rich console and logging
 console = Console()
@@ -77,6 +78,7 @@ setup_metrics(app)
 app.include_router(nodes.router, prefix="/nodes", tags=["nodes"])
 app.include_router(jobs.router, prefix="/jobs", tags=["jobs"])
 app.include_router(matchmaking.router, prefix="/matchmaking", tags=["matchmaking"])
+app.include_router(reputation_router, prefix="/reputation", tags=["reputation"])
 
 # Root endpoint
 @app.get("/")

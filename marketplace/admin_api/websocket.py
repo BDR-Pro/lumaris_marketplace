@@ -2,7 +2,8 @@ from fastapi import WebSocket, WebSocketDisconnect, Depends, HTTPException, stat
 from typing import Dict, List, Optional, Any
 import json
 import logging
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 
 from .auth import get_current_node_from_token
 from .models import Node
@@ -19,34 +20,78 @@ class ConnectionManager:
         self.active_connections: Dict[str, WebSocket] = {}
         # Last heartbeat time for each node
         self.last_heartbeat: Dict[str, datetime] = {}
+        # Connection pool status
+        self.pool_status = {
+            "total_connections_ever": 0,
+            "max_concurrent_connections": 0,
+            "connection_errors": 0,
+            "heartbeat_failures": 0
+        }
+        # Heartbeat monitor task
+        self.heartbeat_monitor_task = None
+        # Heartbeat timeout in seconds
+        self.heartbeat_timeout = 120  # 2 minutes
+        # Heartbeat check interval in seconds
+        self.heartbeat_check_interval = 30  # 30 seconds
     
     async def connect(self, websocket: WebSocket, node_id: str):
         await websocket.accept()
         self.active_connections[node_id] = websocket
         self.last_heartbeat[node_id] = datetime.now()
-        logger.info(f"Node {node_id} connected via WebSocket")
+        
+        # Update connection stats
+        self.pool_status["total_connections_ever"] += 1
+        current_connections = len(self.active_connections)
+        if current_connections > self.pool_status["max_concurrent_connections"]:
+            self.pool_status["max_concurrent_connections"] = current_connections
+        
+        logger.info(f"Node {node_id} connected via WebSocket. Active connections: {current_connections}")
         increment_websocket_connections()
     
-    def disconnect(self, node_id: str):
+    def disconnect(self, node_id: str, reason: str = "normal"):
         if node_id in self.active_connections:
             del self.active_connections[node_id]
         if node_id in self.last_heartbeat:
             del self.last_heartbeat[node_id]
-        logger.info(f"Node {node_id} disconnected from WebSocket")
+        
+        if reason != "normal":
+            logger.warning(f"Node {node_id} disconnected from WebSocket: {reason}")
+            if reason == "heartbeat_timeout":
+                self.pool_status["heartbeat_failures"] += 1
+            elif reason == "error":
+                self.pool_status["connection_errors"] += 1
+        else:
+            logger.info(f"Node {node_id} disconnected from WebSocket")
+        
         decrement_websocket_connections()
     
     async def send_message(self, node_id: str, message: Dict[str, Any]):
         if node_id in self.active_connections:
-            websocket = self.active_connections[node_id]
-            await websocket.send_json(message)
-            logger.info(f"Message sent to node {node_id}: {message}")
-            return True
+            try:
+                websocket = self.active_connections[node_id]
+                await websocket.send_json(message)
+                logger.info(f"Message sent to node {node_id}: {message}")
+                return True
+            except Exception as e:
+                logger.error(f"Error sending message to node {node_id}: {str(e)}")
+                self.disconnect(node_id, reason="error")
+                return False
         logger.warning(f"Attempted to send message to disconnected node {node_id}")
         return False
     
     async def broadcast(self, message: Dict[str, Any]):
+        disconnected_nodes = []
         for node_id, websocket in self.active_connections.items():
-            await websocket.send_json(message)
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.error(f"Error broadcasting to node {node_id}: {str(e)}")
+                disconnected_nodes.append(node_id)
+        
+        # Clean up disconnected nodes
+        for node_id in disconnected_nodes:
+            self.disconnect(node_id, reason="error")
+        
         logger.info(f"Broadcast message sent to {len(self.active_connections)} nodes: {message}")
     
     def update_heartbeat(self, node_id: str):
@@ -59,6 +104,52 @@ class ConnectionManager:
     
     def is_connected(self, node_id: str) -> bool:
         return node_id in self.active_connections
+    
+    def get_connection_stats(self) -> Dict[str, Any]:
+        stats = self.pool_status.copy()
+        stats["current_connections"] = len(self.active_connections)
+        return stats
+    
+    async def monitor_heartbeats(self):
+        """Monitor node heartbeats and disconnect inactive nodes."""
+        logger.info("Starting WebSocket heartbeat monitor")
+        while True:
+            try:
+                current_time = datetime.now()
+                inactive_nodes = []
+                
+                for node_id, last_time in self.last_heartbeat.items():
+                    # If no heartbeat for the timeout period, consider node inactive
+                    if current_time - last_time > timedelta(seconds=self.heartbeat_timeout):
+                        inactive_nodes.append(node_id)
+                
+                # Disconnect inactive nodes
+                for node_id in inactive_nodes:
+                    if node_id in self.active_connections:
+                        try:
+                            await self.active_connections[node_id].close(code=1000)
+                        except Exception:
+                            pass  # Already disconnected
+                        self.disconnect(node_id, reason="heartbeat_timeout")
+                        logger.warning(f"Node {node_id} disconnected due to heartbeat timeout")
+                
+                # Check every interval
+                await asyncio.sleep(self.heartbeat_check_interval)
+            except Exception as e:
+                logger.error(f"Error in heartbeat monitor: {str(e)}")
+                await asyncio.sleep(self.heartbeat_check_interval)
+    
+    def start_heartbeat_monitor(self):
+        """Start the heartbeat monitor task."""
+        if self.heartbeat_monitor_task is None or self.heartbeat_monitor_task.done():
+            self.heartbeat_monitor_task = asyncio.create_task(self.monitor_heartbeats())
+            logger.info("Heartbeat monitor started")
+    
+    def stop_heartbeat_monitor(self):
+        """Stop the heartbeat monitor task."""
+        if self.heartbeat_monitor_task and not self.heartbeat_monitor_task.done():
+            self.heartbeat_monitor_task.cancel()
+            logger.info("Heartbeat monitor stopped")
 
 
 # Create a global connection manager
@@ -91,7 +182,9 @@ async def handle_websocket(websocket: WebSocket, token: str):
         await websocket.send_json({
             "type": "connection_established",
             "node_id": node.id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
+            "heartbeat_interval": 60,  # Recommend heartbeat every 60 seconds
+            "heartbeat_timeout": manager.heartbeat_timeout
         })
         
         # Handle messages
@@ -165,7 +258,7 @@ async def handle_websocket(websocket: WebSocket, token: str):
     except Exception as e:
         # Handle other exceptions
         logger.error(f"WebSocket error for node {node.id}: {str(e)}")
-        manager.disconnect(node.id)
+        manager.disconnect(node.id, reason="error")
 
 
 async def send_job_notification(node_id: str, job_id: str, job_details: Dict[str, Any]) -> bool:
@@ -227,3 +320,13 @@ def is_node_connected(node_id: str) -> bool:
         bool: True if the node is connected, False otherwise
     """
     return manager.is_connected(node_id)
+
+
+def get_connection_stats() -> Dict[str, Any]:
+    """
+    Get statistics about WebSocket connections.
+    
+    Returns:
+        Dict[str, Any]: Connection statistics
+    """
+    return manager.get_connection_stats()

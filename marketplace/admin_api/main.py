@@ -2,6 +2,7 @@
 
 import logging
 import os
+import asyncio
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
@@ -12,7 +13,7 @@ from functools import partial
 
 from . import models, schemas, nodes, jobs, matchmaking, auth
 from .database import engine, get_db
-from .websocket import handle_websocket
+from .websocket import handle_websocket, manager as websocket_manager
 from .rate_limiter import create_rate_limiter, rate_limit_middleware
 from .metrics import setup_metrics
 
@@ -89,8 +90,31 @@ def health_check():
     log.info("Health check endpoint accessed")
     return {"status": "healthy"}
 
+# WebSocket connection stats endpoint
+@app.get("/ws/stats")
+def websocket_stats():
+    """Get statistics about WebSocket connections."""
+    log.info("WebSocket stats endpoint accessed")
+    return websocket_manager.get_connection_stats()
+
 # WebSocket endpoint
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     log.info("WebSocket connection initiated")
     await handle_websocket(websocket, token)
+
+# Startup event
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup."""
+    log.info("Starting up the API server")
+    # Start the WebSocket heartbeat monitor
+    websocket_manager.start_heartbeat_monitor()
+
+# Shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown."""
+    log.info("Shutting down the API server")
+    # Stop the WebSocket heartbeat monitor
+    websocket_manager.stop_heartbeat_monitor()

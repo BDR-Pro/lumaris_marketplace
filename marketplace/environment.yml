@@ -11,16 +11,16 @@ dependencies:
   - pydantic>=2.0.0
   - python-jose>=3.3.0
   - cryptography>=40.0.0
-  - pytest>=7.3.1
+  - pytest>=8.3.5  # Updated from 7.3.1
   - pytest-asyncio>=0.21.0
   - pytest-cov>=4.1.0
   - httpx>=0.24.0
-  - websockets>=11.0.0
+  - websockets>=15.0.1  # Updated from 11.0.0
   - black>=23.7.0
   - isort>=5.12.0
   - mypy>=1.5.1
   - flake8>=6.1.0
-  - python-multipart>=0.0.6
+  - python-multipart>=0.0.18  # Updated from 0.0.6
   - rich>=13.0.0
   - pip:
     - pytest-xdist>=3.3.1  # For parallel test execution
@@ -28,4 +28,6 @@ dependencies:
     - pytest-mock>=3.11.1  # For mocking in tests
     - pytest-sugar>=0.9.7  # For better test output
     - pytest-html>=3.2.0  # For HTML test reports
-
+    - psycopg2-binary>=2.9.10  # Updated from 2.9.7
+    - channels>=4.2.2  # Updated from 4.0.0
+    - crispy-bootstrap5>=2025.4  # Updated from 0.7

@@ -8,7 +8,7 @@ djangorestframework==3.14.0
 channels==4.0.0
 
 # Database
-psycopg2-binary==2.9.7
+psycopg2-binary==2.9.10
 
 # HTTP and WebSockets
 httpx==0.24.1

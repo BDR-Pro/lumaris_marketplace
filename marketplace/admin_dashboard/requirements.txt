@@ -1,7 +1,7 @@
 # Django and related packages
 Django==4.2.7
 django-crispy-forms==2.0
-crispy-bootstrap5==0.7
+crispy-bootstrap5==2025.4
 django-htmx==1.16.0
 django-cors-headers==4.3.1
 djangorestframework==3.14.0

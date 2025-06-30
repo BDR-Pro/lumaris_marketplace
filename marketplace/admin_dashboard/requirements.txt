@@ -18,7 +18,7 @@ requests==2.31.0
 # Server
 gunicorn==21.2.0
 whitenoise==6.5.0
-uvicorn[standard]==0.23.2
+uvicorn[standard]==0.35.0
 
 # Environment and utilities
 python-dotenv==1.0.0

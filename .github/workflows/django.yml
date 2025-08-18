@@ -19,7 +19,7 @@ jobs:
     steps:
       # ✅ Checkout the code
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # ✅ Set up the requested Python version
       - name: Set up Python
